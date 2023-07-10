@@ -2,10 +2,12 @@ from pathlib import Path
 from cv2 import imread
 
 
-def read_dataset_folder(folder, verbose=False):
+def read_dataset_folder(folder, sample_name=None, verbose=False):
     assert Path(folder).exists() and Path(folder).is_dir()
 
-    for path in sorted(Path(folder).glob("[0-9]*_[0-9]*")):
+    folder_pattern = "[0-9]*_[0-9]*" if sample_name is None else sample_name
+
+    for path in sorted(Path(folder).glob(folder_pattern)):
         files = sorted(path.glob("*"))
         if verbose:
             print(f"load file {str(path)}")
