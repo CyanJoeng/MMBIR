@@ -48,7 +48,7 @@ def match(
 def show_keypoints(
     img: np.ndarray, keypoints: List[PointFeature], save_path: str = None
 ):
-    scale = 4
+    scale = 1
 
     img_show = cv2.resize(img, np.array(img.shape[:2])[::-1] // scale)
     for kp in keypoints:
@@ -71,7 +71,7 @@ def show_matches(
     assert img_moving.shape[2] == img_fixed.shape[2]
     assert img_moving.dtype == img_fixed.dtype and img_fixed.dtype == np.uint8
 
-    scale = 4
+    scale = 1
 
     img_moving = cv2.resize(img_moving, np.array(img_moving.shape[:2])[::-1] // scale)
     img_fixed = cv2.resize(img_fixed, np.array(img_fixed.shape[:2])[::-1] // scale)
@@ -113,17 +113,21 @@ def registration_pipeline(img_path: Tuple[str], args):
 
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    img_moving = load_image(img_path[0], verbose)
-    img_fixed = load_image(img_path[1], verbose)
+    img_moving = load_image(img_path[0], verbose, downsize=args.downsize)
+    print("img_moving shape ", img_moving.shape)
+    img_fixed = load_image(img_path[1], verbose, downsize=args.downsize)
+    print("img_fixed shape ", img_fixed.shape)
 
     feat_moving = feature_detect(
         img_moving, method, num_feat=args.features, verbose=verbose
     )
+    print(f"feat_moving len {len(feat_moving)}")
     show_keypoints(img_moving, feat_moving, str(save_dir / "keypoints_pano.tif"))
 
     feat_fixed = feature_detect(
         img_fixed, method, is_he=True, num_feat=args.features, verbose=verbose
     )
+    print(f"feat_fixed len {len(feat_moving)}")
     show_keypoints(img_fixed, feat_fixed, str(save_dir / "keypoints_fixed.tif"))
 
     if verbose:
@@ -145,6 +149,9 @@ def helper():
         "-f", "--features", type=int, default=300, help="count of features"
     )
     parser.add_argument("-c", "--count", type=int, default=30, help="count of matches")
+    parser.add_argument(
+        "--downsize", type=int, default=1, help="downsize original images"
+    )
     parser.add_argument(
         "-m",
         "--method",

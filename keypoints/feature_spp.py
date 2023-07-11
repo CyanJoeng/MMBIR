@@ -5,7 +5,6 @@ from keras import layers
 from feature import Feature, PointFeature
 
 import numpy as np
-from sklearn.preprocessing import normalize
 import cv2
 import tensorflow as tf
 from tensorflow import keras
@@ -32,20 +31,22 @@ class Spp:
         self.features = None
 
     def compute(self, layers=3, mask_r=2, num_feat=None):
+        print("spp compute")
+        print(f"\tnum_feat {num_feat}")
         img_h, img_w, _ = self.img.shape
 
         gray_img = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
         input_data = np.array(gray_img).astype(np.float32)
         input_data = input_data.reshape([1, img_h, img_w, 1])
-        print(f"input data shape {input_data.shape}")
+        print(f"\tinput data shape {input_data.shape}")
 
         pool_size = [2**pow for pow in range(1, layers + 1)]
-        print("pool size ", pool_size)
+        print("\tpool size ", pool_size)
 
         block_width = [int(pool_size[-1] / sz) for sz in pool_size]
         area_size = [int(w**2) for w in block_width]
         feature_len = np.sum(area_size[:-1])
-        print(f"block width: {block_width}  feature len {feature_len}")
+        print(f"\tblock width: {block_width}  feature len {feature_len}")
 
         inputs = keras.Input(shape=(None, None, 1))
         outputs = [
@@ -54,7 +55,7 @@ class Spp:
         ]
         model = keras.Model(inputs, outputs)
         pool_results = model.predict(input_data)
-        print([layer.shape for layer in pool_results])
+        print("\tlayer shapes ", [layer.shape for layer in pool_results])
 
         feat_map_h, feat_map_w = pool_results[-1].shape[1:-1]
         feature_map = np.zeros((feature_len, feat_map_h, feat_map_w), np.float32)
@@ -62,7 +63,7 @@ class Spp:
         for idx, feat in enumerate(pool_results[:-1]):
             feat_img = feat[0, :, :, 0]
             b_w = block_width[idx]
-            print(f"layer {idx} b_w {b_w} feat_shape {feat_img.shape}")
+            print(f"\tlayer {idx} b_w {b_w} feat_shape {feat_img.shape}")
             for idx_r in range(feat_img.shape[0] // b_w):
                 for idx_c in range(feat_img.shape[1] // b_w):
                     st = np.sum(area_size[:idx]).astype(np.int32)
@@ -71,33 +72,27 @@ class Spp:
                         feat_img[idx_r : idx_r + b_w, idx_c : idx_c + b_w]
                     ).flatten()
 
-                    # if idx_r == 0 and idx_c == 0:
-                    #     print(f"area_size {area_size}  st{st} ed{ed}")
-                    #     print(f"feature {idx_r},{idx_c} {feature_map[:, idx_r, idx_c]}")
-
+        print(f"\tlast pool value {pool_results[-1][0, 0, 0, 0]}")
         feature_map -= pool_results[-1][0, :, :, 0]
         feature_intensity_map = np.linalg.norm(feature_map[:, :, :], axis=0)
         feature_intensity_map /= np.max(feature_intensity_map)
         print(
-            f"feature_intensity_map {feature_intensity_map.min()} {feature_intensity_map.max()} {feature_intensity_map.mean()}"
+            f"\tfeature_intensity_map {feature_intensity_map.min()} {feature_intensity_map.max()} {feature_intensity_map.mean()}"
+        )
+        print(
+            f"\tfeature_intensity_map {feature_map.shape} -> {feature_intensity_map.shape}, {np.max(feature_intensity_map)}, {np.min(feature_intensity_map)}"
         )
         self.feature_intensity_map = feature_intensity_map
 
         for idx_r in range(feat_img.shape[0] // b_w):
             for idx_c in range(feat_img.shape[1] // b_w):
-                feature_map[:, idx_r, idx_c] = (
-                    feature_map[:, idx_r, idx_c] - pool_results[-1][0, idx_r, idx_c, 0]
-                )
-                feature_map[:, idx_r, idx_c] = normalize(
+                feature_map[:, idx_r, idx_c] /= np.linalg.norm(
                     [feature_map[:, idx_r, idx_c]]
-                )[0]
+                )
         self.feature_map = feature_map
 
-        print(f"mean {pool_results[-1][0, 0, 0, 0]}")
-        print(f"feature {0},{0} {feature_map[:10, 0, 0]}")
-
         print(
-            f"feature_intensity_map {feature_map.shape} -> {feature_intensity_map.shape}, {np.max(feature_intensity_map)}, {np.min(feature_intensity_map)}"
+            f"\tfeature example {0},{0} len {feature_map.shape} {feature_map[:10, 0, 0]}"
         )
 
         if num_feat is not None:
@@ -139,6 +134,7 @@ class Spp:
     def match(
         spp_moving: List[SppFeature], spp_fixed: List[SppFeature], top_count=30
     ) -> List[Tuple[Feature]]:
+        print("spp match")
         len_fix, len_move = len(spp_fixed), len(spp_moving)
         query_map = np.zeros((len_fix, len_move), dtype=np.float32)
         for r in range(len_fix):
@@ -147,14 +143,16 @@ class Spp:
                 # print("spp feat mov ", spp_moving[c].desc[:10])
                 query_map[r, c] = spp_fixed[r].distance_to(spp_moving[c])
 
-        print(f"max {query_map.max()}")
+        print(f"\tmax of query_map {query_map.max()}")
         cv2.imwrite("/tmp/query_map.tif", query_map / query_map.max())
 
-        matches = [(r, np.argpartition(query_map[r, :], 10)[9]) for r in range(len_fix)]
-        print(matches)
+        matches = [(r, np.argpartition(query_map[r, :], 10)[0]) for r in range(len_fix)]
+        print("\tmatches", f"len {len(matches)}", matches)
 
-        print(spp_fixed[10].desc[:20])
-        print(spp_moving[matches[10][1]].desc[:20])
+        print("\tspp fixed desc example ", spp_fixed[10].desc[:20])
+        print(
+            "\tmatched spp moving desc example ", spp_moving[matches[10][1]].desc[:20]
+        )
 
         matched_feats = [
             (spp_moving[m[1]], spp_fixed[m[0]]) for m in matches[:top_count]
