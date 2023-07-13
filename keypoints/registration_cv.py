@@ -3,6 +3,7 @@ from feature import Feature, PointFeature
 from feature_orb import Orb
 from feature_sift import Sift
 from feature_spp import Spp
+from transform import find_trans_matrix
 from dataset import read_dataset_folder, load_image
 import numpy as np
 from pathlib import Path
@@ -136,6 +137,14 @@ def registration_pipeline(img_path: Tuple[str], args):
 
     save_path = str(save_dir / "matches.tif")
     is_exit = show_matches(img_moving, img_fixed, matches, save_path, verbose=verbose)
+
+    trans_matrix, homo_matches = find_trans_matrix(matches)
+
+    save_path = str(save_dir / "matches_homo.tif")
+    is_exit = show_matches(
+        img_moving, img_fixed, homo_matches, save_path, verbose=verbose
+    )
+
     return is_exit
 
 
