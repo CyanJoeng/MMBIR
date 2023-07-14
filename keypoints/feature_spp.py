@@ -22,6 +22,19 @@ class SppFeature(PointFeature):
     @override
     def distance_to(self, another_feature) -> float:
         diff = self.desc - another_feature.desc
+
+        len_v = diff.shape[0]
+        h_len_v = diff.shape[0] // 3
+
+        scale = 2 * np.e / len_v
+
+        # sigmoid(x) = 1 / (1 + exp(-x)).
+        diff = np.array(
+            [
+                2 * val / (1 + np.exp(-(idx - h_len_v) * scale))
+                for idx, val in enumerate(diff)
+            ]
+        )
         return np.linalg.norm(diff)
 
 

@@ -1,9 +1,11 @@
-from typing import List, Tuple
+from typing import List, Tuple, overload
 from feature import Feature, PointFeature
 from feature_orb import Orb
 from feature_sift import Sift
 from feature_spp import Spp
+from transform import trans_image_by
 from transform import find_trans_matrix
+from transform import filter_by_fundamental
 from dataset import read_dataset_folder, load_image
 import numpy as np
 from pathlib import Path
@@ -107,6 +109,26 @@ def show_matches(
     cv2.imwrite(save_path, img_show)
 
 
+def show_overlay(img_fixed: np.ndarray, overlay_pts: np.ndarray, save_path: str):
+    h, w, _ = img_fixed.shape
+    print(show_overlay)
+
+    overlay = np.zeros((h, w + w, 3), np.uint8)
+    overlay[:, w:, :] = img_fixed
+    for data in overlay_pts:
+        x, y, b, g, r = data
+        x += 0.5
+        y += 0.5
+        if x < 0 or x >= w or y < 0 or y >= h:
+            continue
+        x, y = int(x), int(y)
+
+        overlay[y, x] = np.array([b, g, r], np.uint8)
+
+    print("save path: ", save_path)
+    cv2.imwrite(save_path, overlay)
+
+
 def registration_pipeline(img_path: Tuple[str], args):
     verbose = args.verbose
     method = get_method(args.method)
@@ -138,12 +160,16 @@ def registration_pipeline(img_path: Tuple[str], args):
     save_path = str(save_dir / "matches.tif")
     is_exit = show_matches(img_moving, img_fixed, matches, save_path, verbose=verbose)
 
-    trans_matrix, homo_matches = find_trans_matrix(matches)
+    trans_matrix, refined_matches = filter_by_fundamental(matches)
 
     save_path = str(save_dir / "matches_homo.tif")
     is_exit = show_matches(
-        img_moving, img_fixed, homo_matches, save_path, verbose=verbose
+        img_moving, img_fixed, refined_matches, save_path, verbose=verbose
     )
+
+    transed_data = trans_image_by(trans_matrix, img_moving)
+    save_path = str(save_dir / "overlay.tif")
+    show_overlay(img_fixed, transed_data, save_path)
 
     return is_exit
 
