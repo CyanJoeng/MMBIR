@@ -1,14 +1,14 @@
 from typing import List, Tuple
 import cv2
-from feature_spp import SppFeature
 import numpy as np
+from .feature import PointFeature
 
 
 MIN_HOMO_COUNT = 10
 MIN_FUNDA_COUNT = 8
 
 
-def filter_by_fundamental(matches: List[Tuple[SppFeature]]):
+def filter_by_fundamental(matches: List[Tuple[PointFeature]]):
     if len(matches) > MIN_HOMO_COUNT:
         src_pts = np.float32([m[0].keypoint.pt for m in matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([m[1].keypoint.pt for m in matches]).reshape(-1, 1, 2)
@@ -30,7 +30,7 @@ def filter_by_fundamental(matches: List[Tuple[SppFeature]]):
     return F_M, refined_matches
 
 
-def find_trans_matrix(matches: List[Tuple[SppFeature]]):
+def find_trans_matrix(matches: List[Tuple[PointFeature]]):
     if len(matches) > MIN_HOMO_COUNT:
         src_pts = np.float32([m[0].keypoint.pt for m in matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([m[1].keypoint.pt for m in matches]).reshape(-1, 1, 2)

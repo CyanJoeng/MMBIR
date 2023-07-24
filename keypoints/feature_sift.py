@@ -1,6 +1,6 @@
 from typing import List, Tuple
 from typing_extensions import override
-from feature import Feature, PointFeature
+from .feature import Feature, PointFeature
 
 import numpy as np
 import cv2
@@ -22,7 +22,7 @@ class Sift:
         self.img = img
         self.features = None
 
-    def compute(self, num_feat=300):
+    def compute(self, num_feat=300, cache_dir=""):
         sift = cv2.SIFT_create(nfeatures=300)
 
         gray_img = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
@@ -34,7 +34,10 @@ class Sift:
 
     @staticmethod
     def match(
-        sift_moving: List[SiftFeature], sift_fixed: List[SiftFeature], top_count=30
+        sift_moving: List[SiftFeature],
+        sift_fixed: List[SiftFeature],
+        top_count=30,
+        cache_dir="",
     ) -> List[Tuple[Feature]]:
         bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
 
@@ -45,7 +48,7 @@ class Sift:
         matches = bf.match(desc_moving, desc_fixed)
 
         matched_feats = [
-            (sift_moving[m.queryIdx], sift_fixed[m.trainIdx])
+            (sift_moving[m.queryIdx], sift_fixed[m.trainIdx], m.distance)
             for m in matches[:top_count]
         ]
         return matched_feats

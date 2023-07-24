@@ -1,6 +1,6 @@
 from typing import List, Tuple
 from typing_extensions import override
-from feature import Feature, PointFeature
+from .feature import Feature, PointFeature
 
 import numpy as np
 import cv2
@@ -22,7 +22,7 @@ class Orb:
         self.img = img
         self.features = None
 
-    def compute(self, num_feat=300):
+    def compute(self, num_feat=300, cache_dir=""):
         orb = cv2.ORB_create(nfeatures=num_feat)
 
         gray_img = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
@@ -34,7 +34,10 @@ class Orb:
 
     @staticmethod
     def match(
-        orb_moving: List[OrbFeature], orb_fixed: List[OrbFeature], top_count=30
+        orb_moving: List[OrbFeature],
+        orb_fixed: List[OrbFeature],
+        top_count=30,
+        cache_dir="",
     ) -> List[Tuple[Feature]]:
         bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
@@ -45,6 +48,7 @@ class Orb:
         matches = bf.match(desc_moving, desc_fixed)
 
         matched_feats = [
-            (orb_moving[m.queryIdx], orb_fixed[m.trainIdx]) for m in matches[:top_count]
+            (orb_moving[m.queryIdx], orb_fixed[m.trainIdx], m.distance)
+            for m in matches[:top_count]
         ]
         return matched_feats

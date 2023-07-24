@@ -1,5 +1,5 @@
 from pathlib import Path
-from cv2 import imread, resize, IMREAD_ANYCOLOR
+import cv2
 
 
 def read_dataset_folder(folder, sample_name=None, verbose=False):
@@ -10,17 +10,21 @@ def read_dataset_folder(folder, sample_name=None, verbose=False):
     for path in sorted(Path(folder).glob(folder_pattern)):
         files = sorted(path.glob("*"))
         if verbose:
-            print(f"load file {str(path)}")
+            print(f"load file {(str(files[0]), str(files[1]))}")
         yield (str(files[0]), str(files[1]))
 
 
-def load_image(path: str, verbose=False, downsize=1):
+def load_image(path: str, verbose=False, downsize=1, to_gray=False):
     if verbose:
         print(f"read img {path}")
 
-    img = imread(path, IMREAD_ANYCOLOR)
+    img = cv2.imread(path, cv2.IMREAD_ANYCOLOR)
     h, w, _ = img.shape
-    img = resize(img, (w // downsize, h // downsize))
+    img = cv2.resize(img, (w // downsize, h // downsize))
+
+    if to_gray:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
     return img
 
 

@@ -1,12 +1,11 @@
-from typing import List, Tuple
 from typing_extensions import override
+from typing import List, Tuple
 
-from keras import layers
-from feature import Feature, PointFeature
+from .feature import PointFeature, feature_match
+from pathlib import Path
 
 import numpy as np
 import cv2
-import tensorflow as tf
 from tensorflow import keras
 
 
@@ -16,6 +15,8 @@ class SppKeypoint:
 
 
 class SppFeature(PointFeature):
+    SIGMOID_DISTANCE = False
+
     def __init__(self, kp, descriptor: None) -> None:
         super().__init__(SppKeypoint(kp), descriptor)
 
@@ -23,35 +24,45 @@ class SppFeature(PointFeature):
     def distance_to(self, another_feature) -> float:
         diff = self.desc - another_feature.desc
 
-        len_v = diff.shape[0]
-        h_len_v = diff.shape[0] // 3
+        if SppFeature.SIGMOID_DISTANCE:
+            len_v = diff.shape[0]
+            h_len_v = diff.shape[0] // 3
 
-        scale = 2 * np.e / len_v
+            scale = 2 * np.e / len_v
 
-        # sigmoid(x) = 1 / (1 + exp(-x)).
-        diff = np.array(
-            [
-                2 * val / (1 + np.exp(-(idx - h_len_v) * scale))
-                for idx, val in enumerate(diff)
-            ]
-        )
-        return np.linalg.norm(diff)
+            # sigmoid(x) = 1 / (1 + exp(-x)).
+            diff = np.array(
+                [
+                    2 * val / (1 + np.exp(-(idx - h_len_v) * scale))
+                    for idx, val in enumerate(diff)
+                ]
+            )
+        distance = np.linalg.norm(diff)
+        return distance
 
 
 class Spp:
+    LAYERS = 5
+
     def __init__(self, img) -> None:
         self.img = img
         self.features = None
 
-    def compute(self, layers=5, num_feat=None):
+    def compute(self, layers=None, num_feat=None, cache_dir=""):
+        if layers is None:
+            layers = Spp.LAYERS
+
         print("spp compute")
         print(f"\tnum_feat {num_feat}")
+        print(f"\tlayers {layers}")
 
         img_h, img_w, _ = self.img.shape
         gray_img = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
         input_data = np.array(gray_img).astype(np.float32)
         input_data = input_data.reshape([1, img_h, img_w, 1])
         print(f"\tinput data shape {input_data.shape}")
+
+        mask_size = max(img_h, img_w) // 50
 
         # feat count in each layer
         # 1x1 + 2x2 + 4x4 + 8x8 + 16x16 + ...
@@ -97,16 +108,20 @@ class Spp:
 
             block_off_tl = np.floor(2 ** (idx - 1)).astype(np.int32)
             block_off_br = np.ceil(2 ** (idx - 1)).astype(np.int32)
+
+            range_st_off = (-h_bs) + (p_sz // 2)
+            range_ed_off = h_bs
+            range_step = p_sz
             print(
-                f"\tfeatu map  st {feat_st} ed {feat_ed} off {block_off_tl},{block_off_br}"
+                f"\tfeatu map  st {range_st_off} ed {range_ed_off} step {range_step} count {len(range(range_st_off, range_ed_off, range_step)) ** 2}"
             )
 
             for idx_r in range(h_bs, img_h - h_bs + 1):
                 for idx_c in range(h_bs, img_w - h_bs + 1):
-                    feature_map[feat_st:feat_ed, idx_r, idx_c] = pool_results[idx][
+                    feature_map[feat_st:feat_ed, idx_r, idx_c] = feat[
                         0,
-                        idx_r - block_off_tl : idx_r + block_off_br,
-                        idx_c - block_off_tl : idx_c + block_off_br,
+                        range_st_off + idx_r : range_ed_off + idx_r : range_step,
+                        range_st_off + idx_c : range_ed_off + idx_c : range_step,
                         0,
                     ].flatten()
 
@@ -122,39 +137,44 @@ class Spp:
         # the ligher the biger norm of feature vector
         feature_intensity_map = np.linalg.norm(feature_map[:, :, :], axis=0)
         print(
-            f"\tfeature_intensity_map {feature_intensity_map.min()} {feature_intensity_map.max()} {feature_intensity_map.mean()}"
+            f"\tfeature_intensity_map \
+            {feature_intensity_map.min()} \
+            {feature_intensity_map.max()} \
+            {feature_intensity_map.mean()}"
         )
         feature_intensity_map /= np.max(feature_intensity_map)
         print(
-            f"\tfeature_intensity_map {feature_map.shape} -> {feature_intensity_map.shape}, {np.max(feature_intensity_map)}, {np.min(feature_intensity_map)}"
+            f"\tfeature_intensity_map {feature_map.shape} -> \
+            {feature_intensity_map.shape}, \
+            {np.max(feature_intensity_map)}, \
+            {np.min(feature_intensity_map)}"
         )
         self.feature_intensity_map = feature_intensity_map
 
         # select features based on intensity of features
         def select_feature(feature_pos, intensity_map):
-            for idx in range(feature_pos.shape[0]):
-                y, x = np.unravel_index(
-                    np.argmax(intensity_map), shape=intensity_map.shape
-                )
-                feature_pos[idx, :] = np.array([x, y]).astype(np.int32)
-                intensity_map = cv2.circle(intensity_map, (x, y), min(h_bs, 8), 0, -1)
             return intensity_map
 
-        if num_feat is not None:
-            cv2.imwrite("/tmp/feature_intensity_map_he.tif", feature_intensity_map)
-            top_feature_pos = np.zeros((num_feat, 2), dtype=np.int32)
-            masked_intensity_map = select_feature(
-                top_feature_pos, feature_intensity_map
+        if num_feat is None:
+            num_feat = 300
+
+        top_feature_pos = np.zeros((num_feat, 2), dtype=np.int32)
+        masked_intensity_map = np.copy(feature_intensity_map)
+        for idx in range(num_feat):
+            y, x = np.unravel_index(
+                np.argmax(masked_intensity_map), shape=masked_intensity_map.shape
             )
-            cv2.imwrite("/tmp/feature_intensity_map_mask_he.tif", feature_intensity_map)
-        else:
-            cv2.imwrite("/tmp/feature_intensity_map_pano.tif", feature_intensity_map)
-            top_feature_pos = np.zeros((200, 2), dtype=np.int32)
-            masked_intensity_map = select_feature(
-                top_feature_pos, feature_intensity_map
+            top_feature_pos[idx, :] = np.array([x, y]).astype(np.int32)
+            masked_intensity_map = cv2.circle(
+                masked_intensity_map, (x, y), mask_size, 0, -1
             )
+
+        if cache_dir != "":
+            cache_dir = Path(cache_dir)
+            cv2.imwrite(str(cache_dir / "intensity_map.tif"), feature_intensity_map)
             cv2.imwrite(
-                "/tmp/feature_intensity_map_mask_pano.tif", feature_intensity_map
+                str(cache_dir / "intensity_map_mask.tif"),
+                masked_intensity_map,
             )
 
         # ceate spp features
@@ -167,62 +187,52 @@ class Spp:
         ]
 
     @staticmethod
+    def refine_fun(query_map, r, cs):
+        return query_map[r, cs[0]] < query_map[r, cs[1]] and query_map[r, cs[0]] < 10
+
+    @staticmethod
     def match(
-        spp_moving: List[SppFeature], spp_fixed: List[SppFeature], top_count=30
-    ) -> List[Tuple[SppFeature]]:
-        print("spp match")
-        len_fix, len_move = len(spp_fixed), len(spp_moving)
-        query_map = np.zeros((len_fix, len_move), dtype=np.float32)
-        for r in range(len_fix):
-            for c in range(len_move):
-                # print("spp feat fix ", spp_fixed[r].desc[:10])
-                # print("spp feat mov ", spp_moving[c].desc[:10])
-                query_map[r, c] = spp_fixed[r].distance_to(spp_moving[c])
-
-        print(f"\tmax of query_map {query_map.max()}")
-        cv2.imwrite("/tmp/query_map.tif", query_map / query_map.max())
-
-        matches = [
-            (r, np.argpartition(query_map[r, :], (1, 3))[:3]) for r in range(len_fix)
-        ]
-        print("\tmatches", f"len {len(matches)}")
-        refined_matches = [
-            (r, cs[0])
-            # [f"{query_map[r, c]:.1f}" for c in cs]
-            for r, cs in matches
-            if query_map[r, cs[0]] < query_map[r, cs[1]] and query_map[r, cs[0]] < 1
-        ]
-        print("\tmatches", f"len {len(refined_matches)}")
-
-        print("\tspp fixed desc example ", spp_fixed[10].desc[:20])
-        print(
-            "\tmatched spp moving desc example ",
-            spp_moving[refined_matches[10][1]].desc[:20],
+        feat_moving: List[SppFeature],
+        feat_fixed: List[SppFeature],
+        top_count=30,
+        cache_dir="",
+    ) -> List[Tuple[PointFeature, PointFeature, float]]:
+        return feature_match(
+            feat_moving,
+            feat_fixed,
+            top_count,
+            filter_fun=Spp.refine_fun,
+            cache_dir=cache_dir,
         )
-
-        matched_feats = [(spp_moving[m[1]], spp_fixed[m[0]]) for m in refined_matches]
-        print(f"\tfinal matches size {len(matches)} -> {len(matched_feats)}")
-
-        return matched_feats
 
 
 if __name__ == "__main__":
-    from sys import argv
+    from sys import argv, path as sys_path
+    from feature import feature_match
 
     if len(argv) != 3:
         print(f"Usage: {argv[0]} image_he image_panorama")
         exit(-1)
 
+    data_id = Path(argv[1]).parts[-2]
+    cache_dir = Path(sys_path[0]).parent / "outputs" / "cache" / "spp" / data_id
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "he").mkdir(parents=True, exist_ok=True)
+    (cache_dir / "pano").mkdir(parents=True, exist_ok=True)
+
     img_he = cv2.imread(argv[1], cv2.IMREAD_ANYCOLOR)
     img_pano = cv2.imread(argv[2], cv2.IMREAD_ANYCOLOR)
 
     spp = Spp(img_he)
-    spp.compute(num_feat=100, layers=5)
+    spp.compute(num_feat=100, layers=5, cache_dir=(cache_dir / "he"))
     he_features = spp.features
 
     spp = Spp(img_pano)
-    spp.compute(layers=5)
+    spp.compute(layers=5, cache_dir=(cache_dir / "pano"))
     pano_features = spp.features
 
     print(f"feature count: he {len(he_features)}  pano {len(pano_features)}")
-    Spp.match(pano_features, he_features)
+
+    feature_match(
+        pano_features, he_features, filter_fun=Spp.refine_fun, cache_dir=str(cache_dir)
+    )
