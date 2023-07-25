@@ -1,8 +1,10 @@
 from tensorflow import keras
 import tensorflow as tf
+from pathlib import Path
+from dnn.model_parameters import *
 
 
-def net_global_feature(num_keypoints: int, feat_len: int):
+def net_point_feature(num_keypoints: int, feat_len: int, trans_matrix=None):
     """
     input feat shape BxNxF
         B: batch size
@@ -10,11 +12,12 @@ def net_global_feature(num_keypoints: int, feat_len: int):
         F: length of keypoint feature
     input pos shape BxNx2
         two dimensions in image coordinate
+    outout feat shape BxNxOUT_FEAT_LEN
     """
 
     N, F = num_keypoints, feat_len
-    input_feat = keras.Input(shape=(N, F))
-    input_pos = keras.Input(shape=(N, 2))
+    input_feat = keras.Input(shape=(N, F), name="input_feat")
+    input_pos = keras.Input(shape=(N, 2), name="input_pos")
 
     out_feat = keras.Sequential(
         [
@@ -43,29 +46,102 @@ def net_global_feature(num_keypoints: int, feat_len: int):
             keras.layers.Conv2D(
                 512, (1, 1), strides=1, padding="valid", activation="relu"
             ),
-        ]
+            keras.layers.Conv2D(
+                OUT_FEAT_LEN, (1, 1), strides=1, padding="valid", activation="relu"
+            ),
+        ],
+        name="point_feat",
     )(input)
+
+    point_feat_model = keras.Model(
+        inputs=(input_feat, input_pos),
+        outputs=output_point_feat,
+        name="point_feat_model",
+    )
+
+    return point_feat_model
+
+
+def net_global_feature(num_keypoints=0, feat_len=0):
+    N, F = num_keypoints, feat_len
+    input_feat = keras.Input(shape=(N, F), name="input_feat")
+    input_pos = keras.Input(shape=(N, 2), name="input_pos")
+
+    point_feat_model = net_point_feature(num_keypoints, feat_len)
+
+    output_point_feat = point_feat_model((input_feat, input_pos))
     output_img_feat = keras.Sequential(
         [
             keras.layers.MaxPool2D(pool_size=(N, 1)),
             keras.layers.Reshape((-1,)),
             keras.layers.Dense(256, activation="relu"),
             keras.layers.Dropout(rate=0.5),
-            keras.layers.Dense(64, activation="relu"),
-        ]
+            keras.layers.Dense(GLOBAL_FEAT_LEN, activation="relu"),
+        ],
+        name="global_feat",
     )(output_point_feat)
 
-    net = keras.Model(inputs=(input_feat, input_pos), outputs=output_img_feat)
+    net = keras.Model(
+        inputs=(input_feat, input_pos),
+        outputs=output_img_feat,
+        name="global_feat_model",
+    )
     return net
 
 
-def net_siamese_global_feats(num_keypoints: int, feat_len: int):
+def net_trans_pos(num_keypoints, feat_len):
+    N, F = num_keypoints, feat_len
+    input_pos = keras.Input(shape=(N, 2), name="input_pos")
+
+    out_feat = keras.Sequential(
+        [
+            keras.layers.Reshape((N, 2, 1)),
+            keras.layers.Conv2D(
+                32, (1, 2), strides=1, padding="valid", activation="relu"
+            ),
+            keras.layers.Conv2D(
+                64, (1, 1), strides=1, padding="valid", activation="relu"
+            ),
+            keras.layers.Conv2D(
+                128, (1, 1), strides=1, padding="valid", activation="relu"
+            ),
+            keras.layers.MaxPool2D(pool_size=(N, 1)),
+            keras.layers.Reshape((-1,)),
+            keras.layers.Dense(64, activation="relu"),
+            keras.layers.Dropout(rate=0.5),
+            keras.layers.Dense(6, activation="relu"),
+        ]
+    )(input_pos)
+
+    matrix_data = tf.reshape(out_feat, (-1, 3, 2))
+
+    r = matrix_data[:, :2, :]
+    t = matrix_data[:, 2:, :]
+    print(f"r {r.shape} t {t.shape}")
+
+    model = keras.Model(inputs=input_pos, outputs=(r, t), name="trans_model")
+    return model
+
+
+def net_siamese_global_feats(num_keypoints: int, feat_len: int, trans=False):
     N, F = num_keypoints, feat_len
 
     input_0_feat = keras.Input(shape=(N, F))
     input_0_pos = keras.Input(shape=(N, 2))
     input_1_feat = keras.Input(shape=(N, F))
     input_1_pos = keras.Input(shape=(N, 2))
+
+    if trans:
+        trans_pos_model = net_trans_pos(num_keypoints, feat_len)
+        trans_r, trans_t = trans_pos_model(input_0_pos)
+
+        trans_0_pos = tf.matmul(input_0_pos, trans_r) + trans_t
+        # out_diff_pos = tf.reduce_mean(
+        #     tf.square(
+        #         tf.reduce_mean(trans_0_pos, axis=1) - tf.reduce_mean(input_1_pos, axis=1)
+        #     )
+        # )
+        input_0_pos = trans_0_pos
 
     global_feat_model = net_global_feature(num_keypoints, feat_len)
 
@@ -80,150 +156,13 @@ def net_siamese_global_feats(num_keypoints: int, feat_len: int):
     return siamese_model
 
 
-if __name__ == "__main__":
-    from sys import argv, path as sys_path
-    from pathlib import Path
-    import numpy as np
+def get_trained_point_feat_net(num_features) -> keras.Model:
+    model_path = Path("outputs") / "dnn" / "models" / "siamese_model.h5"
+    assert model_path.exists()
 
-    sys_path.insert(0, str(Path(sys_path[0]).parent))
-
-    from utils.dataset import load_image
-    from utils.display import show_keypoints
-    from keypoints.feature_spp import Spp
-
-    if len(argv) != 3:
-        print(f"Usage: {argv[0]} data_id_0 data_id_1")
-        exit(-1)
-
-    DOWN_SIZE = 4
-    NUM_FEAT_DETECT = 400
-    NUM_FEAT_INPUT = 200
-    EPOCHS = 20
-    SAMPLES = 5
-    BATCH_SIZE = 2
-    FEAT_LEN = 340
-
-    # get model
-    model = net_siamese_global_feats(NUM_FEAT_INPUT, FEAT_LEN)
-    model.compile(
-        optimizer="adam",
-        loss="binary_crossentropy",
-        metrics=[keras.metrics.BinaryAccuracy(), keras.metrics.AUC()],
+    model = keras.models.load_model(model_path)
+    point_feat_model = net_point_feature(num_features, SPP_FEAT_LEN)
+    point_feat_model.set_weights(
+        model.get_layer("global_feat_model").get_layer("point_feat_model").get_weights()
     )
-
-    # create dataset
-    data_id_0, data_id_1 = argv[1], argv[2]
-    cache_dir = Path("outputs") / "cache" / "dnn" / f"{data_id_0}-{data_id_1}-x4"
-
-    def data_pipeline(data_id):
-        data_dir = (
-            Path(argv[0]).parent.parent / "datasets" / "H&E_IMC" / "Pair" / data_id
-        )
-        data_dir = Path(data_dir).absolute()
-        main_id = str(data_id).split("_")[0]
-
-        img_path = str(data_dir / f"HE{main_id}.tif")
-        img_he = load_image(img_path, verbose=True, downsize=DOWN_SIZE)
-
-        img_path = str(data_dir / f"{main_id}_panorama.tif")
-        img_pano = load_image(img_path, verbose=True, downsize=DOWN_SIZE)
-
-        print(f"Data id {data_id} image size he:{img_he.shape} pano:{img_pano.shape}")
-
-        spp = Spp(img_he)
-        spp_cache_dir = Path(cache_dir / "he" / data_id)
-        spp_cache_dir.mkdir(parents=True, exist_ok=True)
-        spp.compute(num_feat=NUM_FEAT_DETECT, layers=5, cache_dir=spp_cache_dir)
-        he_features = spp.features
-
-        spp = Spp(img_pano)
-        spp_cache_dir = Path(cache_dir / "pano" / data_id)
-        spp_cache_dir.mkdir(parents=True, exist_ok=True)
-        spp.compute(num_feat=NUM_FEAT_DETECT, layers=5, cache_dir=spp_cache_dir)
-        pano_features = spp.features
-
-        show_keypoints(
-            img_he, he_features, str(cache_dir / "he" / f"{data_id}_keypoints_x4.tif")
-        )
-        show_keypoints(
-            img_pano,
-            pano_features,
-            str(cache_dir / "pano" / f"{data_id}_keypoints_x4.tif"),
-        )
-        return he_features, pano_features
-
-    dataset = (data_pipeline(data_id_0), data_pipeline(data_id_1))
-    feat_len = len(dataset[0][0][0].desc)
-    print(f"feature len {feat_len}")
-
-    input_he_feat = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, feat_len))
-    input_he_pose = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, 2))
-    input_pano_feat = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, feat_len))
-    input_pano_pose = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, 2))
-    input_label = np.zeros((SAMPLES * 4,), dtype=np.int32)
-
-    # create dataset by random sampling
-    for data_id, (he_id, pano_id, label) in enumerate(
-        [(0, 0, 0), (0, 1, 1), (1, 0, 1), (1, 1, 0)]
-    ):
-        he_features, pano_features = dataset[he_id][0], dataset[pano_id][1]
-        for sample_id in range(SAMPLES):
-            input_label[SAMPLES * data_id + sample_id] = label
-
-            sample_he = np.random.choice(
-                range(NUM_FEAT_DETECT), size=NUM_FEAT_INPUT, replace=False
-            )
-            sample_pano = np.random.choice(
-                range(NUM_FEAT_DETECT), size=NUM_FEAT_INPUT, replace=False
-            )
-
-            for idx in range(NUM_FEAT_INPUT):
-                input_he_feat[SAMPLES * data_id + sample_id, idx, :] = he_features[
-                    sample_he[idx]
-                ].desc
-                input_he_pose[SAMPLES * data_id + sample_id, idx, :] = he_features[
-                    sample_he[idx]
-                ].keypoint.pt
-                input_pano_feat[SAMPLES * data_id + sample_id, idx, :] = pano_features[
-                    sample_pano[idx]
-                ].desc
-                input_pano_pose[SAMPLES * data_id + sample_id, idx, :] = pano_features[
-                    sample_pano[idx]
-                ].keypoint.pt
-
-    dataset_len = input_label.shape[0]
-    print(f"dataset len {dataset_len}")
-    dataset = tf.data.Dataset.zip(
-        (
-            tf.data.Dataset.zip(
-                tuple(
-                    [
-                        tf.data.Dataset.from_tensor_slices(data)
-                        for data in (
-                            input_he_feat,
-                            input_he_pose,
-                            input_pano_feat,
-                            input_pano_pose,
-                        )
-                    ]
-                )
-            ),
-            tf.data.Dataset.from_tensor_slices(input_label),
-        )
-    )
-    dataset = dataset.shuffle(buffer_size=dataset_len)
-    dataset = dataset.batch(batch_size=BATCH_SIZE)
-    # dataset_x = np.array(
-    #     [
-    #         (
-    #             input_he_feat[idx],
-    #             input_he_pose[idx],
-    #             input_pano_feat[idx],
-    #             input_pano_pose[idx],
-    #         )
-    #         for idx in range(SAMPLES * 4)
-    #     ]
-    # )
-    # dataset_y = input_label
-
-    model.fit(dataset, epochs=EPOCHS)
+    return point_feat_model

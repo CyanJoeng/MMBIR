@@ -5,6 +5,7 @@ from typing import List, Tuple, overload
 import cv2
 from matplotlib import pyplot as plt
 import numpy as np
+import pickle
 
 from utils.dataset import load_image, read_dataset_folder
 from keypoints.feature import Feature, PointFeature, feature_match
@@ -12,7 +13,15 @@ from keypoints.feature_gspp import Gspp
 from keypoints.feature_orb import Orb
 from keypoints.feature_sift import Sift
 from keypoints.feature_spp import Spp
-from keypoints.transform import filter_by_fundamental, find_trans_matrix, trans_image_by
+from keypoints.transform import (
+    filter_by_fundamental,
+    find_trans_matrix,
+    trans_image_by,
+    calc_trans_matrix_by_lstsq,
+)
+
+from dnn.global_feature import get_trained_point_feat_net
+from dnn.transform import calc_trans_matrix_by_matches
 
 from utils.display import *
 
@@ -28,9 +37,9 @@ def feature_detect(
     if verbose:
         print(f"feature detect {img.shape}")
 
-    if method is Spp and not is_he:
-        print("feature on non-he")
-        num_feat = None
+    # if method is Spp and not is_he:
+    #     print("feature on non-he")
+    #     num_feat = None
 
     detector = method(img)
     detector.compute(num_feat=num_feat, cache_dir=cache_dir)
@@ -70,55 +79,144 @@ def match(
     return pairs
 
 
+def point_feat_dnn_trans(
+    feats_moving: List[Feature],
+    feats_fixed: List[Feature],
+    method: Orb | Sift | Spp | Gspp,
+):
+    len_mov, len_fix = len(feats_moving), len(feats_fixed)
+    assert len_mov == len_fix
+    num_feat_input = len_mov
+    feat_len = feats_moving[0].desc.shape[0]
+
+    input_feat = np.zeros((2, num_feat_input, feat_len))
+    input_pose = np.zeros((2, num_feat_input, 2))
+
+    # create dataset by random sampling
+    for data_id, data in enumerate([feats_moving, feats_fixed]):
+        for feat_id in range(num_feat_input):
+            input_feat[data_id, feat_id, :] = data[feat_id].desc
+            input_pose[data_id, feat_id, :] = data[feat_id].keypoint.pt
+
+    model = get_trained_point_feat_net(num_feat_input)
+    feat_output = model.predict((input_feat, input_pose))
+    feat_output = np.array(feat_output)
+
+    for data_id, data in enumerate([feats_moving, feats_fixed]):
+        for feat_id in range(num_feat_input):
+            data[feat_id].desc = feat_output[data_id, feat_id, :]
+
+
+def get_matched_dnn_features(
+    matches: List[Tuple[PointFeature, PointFeature, float]],
+):
+    matches_len = len(matches)
+    print(f"\tget matched dnn features  len {np.array(matches[0][0].desc).shape}")
+    desc_len = np.array(matches[0][0].desc).shape[1]
+
+    pano_pt = np.zeros((matches_len, 2), dtype=np.float32)
+    pano_desc = np.zeros((matches_len, desc_len), dtype=np.float32)
+
+    he_pt = np.zeros((matches_len, 2), dtype=np.float32)
+    he_desc = np.zeros((matches_len, desc_len), dtype=np.float32)
+
+    for idx, (pano, he, _) in enumerate(matches):
+        pano_pt[idx] = np.array(pano.keypoint.pt).flatten()
+
+        pano_desc[idx] = np.array(pano.desc).flatten()
+
+        he_pt[idx] = np.array(he.keypoint.pt).flatten()
+        he_desc[idx] = np.array(he.desc).flatten()
+
+    return ((pano_pt, pano_desc), (he_pt, he_desc))
+
+
+def cache_matched_dnn_features(
+    matched_features,
+    data_id: str,
+    method: str,
+):
+    cache_path = Path("outputs") / "cache" / "dnn" / data_id / f"{method}_features.pkl"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cache_data = {
+        "pano": {
+            "pt": matched_features[0][0],
+            "desc": matched_features[0][1],
+        },
+        "he": {
+            "pt": matched_features[1][0],
+            "desc": matched_features[1][1],
+        },
+    }
+
+    with open(str(cache_path), "wb") as f:
+        pickle.dump(cache_data, f)
+    print("cache features to ", str(cache_path))
+
+
 def registration_pipeline(img_path: Tuple[str], args):
     verbose = args.verbose
     method = get_method(args.method)
     data_id = Path(img_path[0]).parts[-2]
     save_dir = Path("outputs") / args.method / data_id
+    dnn_dir = Path("outputs") / "dnn"
 
-    save_dir.mkdir(exist_ok=True)
+    Path(save_dir).mkdir(exist_ok=True, parents=True)
 
-    img_moving = load_image(img_path[0], verbose, downsize=args.downsize)
-    print("img_moving shape ", img_moving.shape)
-    img_fixed = load_image(img_path[1], verbose, downsize=args.downsize)
-    print("img_fixed shape ", img_fixed.shape)
+    def detect(path, label: str):
+        print("Feature detect on img", path)
+        img = load_image(path, verbose, downsize=args.downsize)
+        print(f"img {label} shape ", img.shape)
+        point_features = feature_detect(
+            img,
+            method,
+            num_feat=args.features,
+            verbose=verbose,
+        )
+        print(f"detected point feature on {label}: count {len(point_features)}")
+        show_keypoints(img, point_features, str(save_dir / f"keypoints_{label}.tif"))
+        return img, point_features
 
-    feat_moving = feature_detect(
-        img_moving,
-        method,
-        num_feat=args.features,
-        verbose=verbose,
+    img_pano, feat_pano = detect(img_path[0], "pano")
+    img_he, feat_he = detect(img_path[1], "he")
+
+    matches = match(
+        feat_pano, feat_he, args.count, method, verbose, cache_dir=str(save_dir)
     )
-    print(f"feat_moving len {len(feat_moving)}")
-    show_keypoints(img_moving, feat_moving, str(save_dir / "keypoints_pano.tif"))
-
-    feat_fixed = feature_detect(
-        img_fixed,
-        method,
-        is_he=True,
-        num_feat=args.features,
-        verbose=verbose,
-    )
-    print(f"feat_fixed len {len(feat_moving)}")
-    show_keypoints(img_fixed, feat_fixed, str(save_dir / "keypoints_fixed.tif"))
-
-    if verbose:
-        print("count  ", args.count)
-    matches = match(feat_moving, feat_fixed, args.count, method, verbose)
+    print("matched (pano-he) count  ", len(matches))
 
     save_path = str(save_dir / "matches.tif")
-    is_exit = show_matches(img_moving, img_fixed, matches, save_path, verbose=verbose)
+    is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
 
-    trans_matrix, refined_matches = filter_by_fundamental(matches)
+    point_feat_dnn_trans(feat_pano, feat_he, method)
+    print(f"feat len -> {feat_pano[0].desc.shape}")
 
-    save_path = str(save_dir / "matches_homo.tif")
-    is_exit = show_matches(
-        img_moving, img_fixed, refined_matches, save_path, verbose=verbose
+    save_dir = save_dir / "dnn"
+    save_dir.mkdir(exist_ok=True)
+    matches = match(
+        feat_pano, feat_he, args.count, method, verbose, cache_dir=str(save_dir)
     )
+    print("dnn refined matched count  ", len(matches))
 
-    transed_data = trans_image_by(trans_matrix, img_moving)
+    save_path = str(save_dir / "matches.tif")
+    is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
+
+    matched_features = get_matched_dnn_features(matches)
+    if args.cache_feature:
+        cache_matched_dnn_features(matched_features, data_id, args.method)
+
+    trans_matrix = calc_trans_matrix_by_matches(
+        matched_features[0], matched_features[1]
+    )
+    # trans_matrix = calc_trans_matrix_by_lstsq(matched_features[0], matched_features[1])
+    # trans_weight_path = str(dnn_dir / "trans" / "trans2d_r_t.pkl")
+    # with open(trans_weight_path, "rb") as f:
+    #     trans_matrix = pickle.load(f)
+
+    transed_data = trans_image_by(trans_matrix, img_pano)
     save_path = str(save_dir / "overlay.tif")
-    show_overlay(img_fixed, transed_data, save_path)
+    show_trans_img(img_he, transed_data, save_path)
 
     return is_exit
 
@@ -152,6 +250,12 @@ def helper():
         default=False,
         action="store_true",
         help="show interim informations",
+    )
+    parser.add_argument(
+        "--cache_feature",
+        default=False,
+        action="store_true",
+        help="cache dnn feature for training",
     )
 
     args = parser.parse_args()

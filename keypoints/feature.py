@@ -22,22 +22,25 @@ class PointFeature(Feature):
 
 
 def feature_match(
-    feat_moving: List[Feature],
-    feat_fixed: List[Feature],
+    feat_pano: List[Feature],
+    feat_he: List[Feature],
     top_count=30,
     filter_fun=None,
     cache_dir="",
 ) -> List[Tuple[PointFeature, PointFeature, float]]:
+    """
+    return pairs keep the same order to argument list, (pano, he)
+    """
     print("feature match")
     print(f"\tcache_dir {cache_dir}")
 
-    len_fix, len_move = len(feat_fixed), len(feat_moving)
+    len_fix, len_move = len(feat_he), len(feat_pano)
     print(f"\tlen fix {len_fix}  move {len_move}")
 
     query_map = np.zeros((len_fix, len_move), dtype=np.float32)
     for r in range(len_fix):
         for c in range(len_move):
-            query_map[r, c] = feat_fixed[r].distance_to(feat_moving[c])
+            query_map[r, c] = feat_he[r].distance_to(feat_pano[c])
 
     print(f"\tmax of query_map {query_map.max()}")
     if cache_dir != "":
@@ -59,7 +62,7 @@ def feature_match(
     print(f"\tmatched feat moving desc example r 10 <-> c {matches[10][1]}")
 
     matched_feats = [
-        (feat_moving[m[1]], feat_fixed[m[0]], query_map[m[0], m[1]]) for m in matches
+        (feat_pano[m[1]], feat_he[m[0]], query_map[m[0], m[1]]) for m in matches
     ]
     print(f"\tfinal matches size {len_fix} -> {len(matched_feats)}")
 

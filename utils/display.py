@@ -22,27 +22,30 @@ def show_keypoints(
 
 
 def show_matches(
-    img_moving: np.ndarray,
-    img_fixed: np.ndarray,
+    img_pano: np.ndarray,
+    img_he: np.ndarray,
     matches: List[Tuple[PointFeature]],
     save_path: str,
     verbose=False,
 ) -> int:
-    assert img_moving.shape[2] == img_fixed.shape[2]
-    assert img_moving.dtype == img_fixed.dtype and img_fixed.dtype == np.uint8
+    """
+    pano image is shows on the left
+    """
+    assert img_pano.shape[2] == img_he.shape[2]
+    assert img_pano.dtype == img_he.dtype and img_he.dtype == np.uint8
 
     scale = 1
 
-    img_moving = cv2.resize(img_moving, np.array(img_moving.shape[:2])[::-1] // scale)
-    img_fixed = cv2.resize(img_fixed, np.array(img_fixed.shape[:2])[::-1] // scale)
+    img_pano = cv2.resize(img_pano, np.array(img_pano.shape[:2])[::-1] // scale)
+    img_he = cv2.resize(img_he, np.array(img_he.shape[:2])[::-1] // scale)
 
-    new_h = max(img_moving.shape[0], img_fixed.shape[0])
-    new_w = img_moving.shape[1] + img_fixed.shape[1]
-    new_c = img_moving.shape[2]
+    new_h = max(img_pano.shape[0], img_he.shape[0])
+    new_w = img_pano.shape[1] + img_he.shape[1]
+    new_c = img_pano.shape[2]
 
     img_show = np.zeros((new_h, new_w, new_c), dtype=np.uint8)
-    img_show[: img_moving.shape[0], : img_moving.shape[1], :] = img_moving
-    img_show[: img_fixed.shape[0], img_moving.shape[1] :, :] = img_fixed
+    img_show[: img_pano.shape[0], : img_pano.shape[1], :] = img_pano
+    img_show[: img_he.shape[0], img_pano.shape[1] :, :] = img_he
 
     for match in matches:
         pt0, pt1 = match[0].keypoint.pt, match[1].keypoint.pt
@@ -50,7 +53,7 @@ def show_matches(
             np.array(pt0).astype(np.int32) // scale,
             np.array(pt1).astype(np.int32) // scale,
         )
-        pt1[0] += img_moving.shape[1]
+        pt1[0] += img_pano.shape[1]
 
         img_show = cv2.line(img_show, pt0, pt1, (255, 255, 0), 1)
 
@@ -66,13 +69,13 @@ def show_matches(
     cv2.imwrite(save_path, img_show)
 
 
-def show_overlay(img_fixed: np.ndarray, overlay_pts: np.ndarray, save_path: str):
-    h, w, _ = img_fixed.shape
-    print(show_overlay)
+def show_trans_img(img_he: np.ndarray, trans_pts: np.ndarray, save_path: str):
+    h, w, _ = img_he.shape
+    print(show_trans_img)
 
-    overlay = np.zeros((h, w + w, 3), np.uint8)
-    overlay[:, w:, :] = img_fixed
-    for data in overlay_pts:
+    concat_img = np.zeros((h, w + w, 3), np.uint8)
+    concat_img[:, w:, :] = img_he
+    for data in trans_pts:
         x, y, b, g, r = data
         x += 0.5
         y += 0.5
@@ -80,7 +83,7 @@ def show_overlay(img_fixed: np.ndarray, overlay_pts: np.ndarray, save_path: str)
             continue
         x, y = int(x), int(y)
 
-        overlay[y, x] = np.array([b, g, r], np.uint8)
+        concat_img[y, x] = np.array([b, g, r], np.uint8)
 
     print("save path: ", save_path)
-    cv2.imwrite(save_path, overlay)
+    cv2.imwrite(save_path, concat_img)

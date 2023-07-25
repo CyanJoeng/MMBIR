@@ -188,7 +188,7 @@ class Spp:
 
     @staticmethod
     def refine_fun(query_map, r, cs):
-        return query_map[r, cs[0]] < query_map[r, cs[1]] and query_map[r, cs[0]] < 10
+        return query_map[r, cs[0]] < query_map[r, cs[1]] and query_map[r, cs[0]] < 1
 
     @staticmethod
     def match(
