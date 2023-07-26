@@ -17,7 +17,7 @@ class OrthoRegularizer(keras.regularizers.Regularizer):
 
 
 class MatrixTransformLayer(keras.layers.Layer):
-    def __init__(self, dim, ortho_initializer=None, ortho_lambda=0.01, **kwargs):
+    def __init__(self, dim, ortho_initializer=None, ortho_lambda=0.1, **kwargs):
         super(MatrixTransformLayer, self).__init__(**kwargs)
 
         self.dim = dim
@@ -78,13 +78,13 @@ def matrix_initializer(shape, dtype=None):
     return matrix
 
 
-def net_transform_pos(num_feature_input: int, pos_dim: int = 2):
+def net_transform_pos(num_feature_input: int):
     """
     the input is a set of keypoint positions in moving image,
     and the shape of the input is BxNx2
     """
     N = num_feature_input
-    DIM = pos_dim
+    DIM = 2
 
     input = keras.Input(shape=(N, DIM))
     output = MatrixTransformLayer(
@@ -128,7 +128,7 @@ def net_matches(num_feature_input: int):
     input_0 = keras.Input(shape=(N, DIM))
     input_1 = keras.Input(shape=(N, DIM))
 
-    trans_model = net_transform_pos(num_feature_input, DIM)
+    trans_model = net_transform_pos(num_feature_input)
 
     transformed_input_0 = trans_model(input_0)
 
@@ -165,28 +165,33 @@ def net_matches(num_feature_input: int):
 def calc_trans_matrix_by_matches(data_pano, data_he):
     EPOCHS = 20
     BATCH_SIZE = 1
-    DIM = 3
+    DIM = 2
+    SIAMESE = False
 
     num_features = data_pano[0].shape[0]
 
     input_pano_pos = np.array(data_pano[0]).reshape((1, -1, 2)).astype(np.float32)
-    input_pano_pos = np.concatenate(
-        (
-            input_pano_pos,
-            np.ones((1, num_features, 1)),
-        ),
-        axis=-1,
-    )
     input_he_pos = np.array(data_he[0]).reshape((1, -1, 2)).astype(np.float32)
-    input_he_pos = np.concatenate(
-        (input_he_pos, np.ones((1, num_features, 1))), axis=-1
-    )
+    if DIM == 3:
+        input_pano_pos = np.concatenate(
+            (
+                input_pano_pos,
+                np.ones((1, num_features, 1)),
+            ),
+            axis=-1,
+        )
+        input_he_pos = np.concatenate(
+            (input_he_pos, np.ones((1, num_features, 1))), axis=-1
+        )
 
     print(f"input pos shape {input_pano_pos.shape} {input_he_pos.shape}")
 
     num_feat = input_he_pos.shape[1]
 
-    model = net_transform_pos(num_feat, DIM)
+    if not SIAMESE:
+        model = net_transform_pos(num_feat)
+    else:
+        model = net_matches(num_features)
     model.compile(optimizer="adam", loss=keras.losses.MeanSquaredError())
     model.summary()
 
@@ -196,25 +201,35 @@ def calc_trans_matrix_by_matches(data_pano, data_he):
     # print("diff pos ", diff_pos)
     # input_pano_pos = input_pano_pos + diff_pos
 
-    coord_scale = 1000
-    input_he_pos /= coord_scale
-    input_pano_pos /= coord_scale
+    if not SIAMESE:
+        model.fit(x=input_pano_pos, y=input_he_pos, epochs=EPOCHS)
+        trans_weights = model.get_layer("matrix").get_weights()
+    else:
+        target_distance = np.array([0.0])
+        dataset = tf.data.Dataset.zip(
+            (
+                tf.data.Dataset.zip(
+                    (
+                        tf.data.Dataset.from_tensor_slices(input_pano_pos),
+                        tf.data.Dataset.from_tensor_slices(input_he_pos),
+                    )
+                ),
+                tf.data.Dataset.from_tensor_slices(target_distance),
+            )
+        )
+        dataset = dataset.batch(1)
 
-    model.fit(x=input_pano_pos, y=input_he_pos, epochs=EPOCHS)
+        model.fit(dataset, epochs=EPOCHS)
 
-    trans_weights = model.get_layer("matrix").get_weights()
-    trans_r = trans_weights[0]
-    trans_t = trans_weights[1]
+        trans_weights = model.get_layer("trans_model").get_layer("matrix").get_weights()
+    print("trans_weights", trans_weights)
+
+    r = trans_weights[0]
+    t = trans_weights[1]
 
     R = np.eye(3, dtype=np.float32)
-    if DIM == 2:
-        R[:2, :2] = trans_r
-        R[2, :2] = trans_t
-    else:
-        R[:, :] = trans_r
-
-    R[:, :] *= coord_scale
-
+    R[:2, :2] = r
+    R[2:, :2] = t
     print("trans R\n ", R)
 
     return R

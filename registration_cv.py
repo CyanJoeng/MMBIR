@@ -108,7 +108,7 @@ def point_feat_dnn_trans(
 
 
 def get_matched_dnn_features(
-    matches: List[Tuple[PointFeature, PointFeature, float]],
+    matches: List[Tuple[PointFeature, PointFeature, float]], he_img_shape
 ):
     matches_len = len(matches)
     print(f"\tget matched dnn features  len {np.array(matches[0][0].desc).shape}")
@@ -120,12 +120,14 @@ def get_matched_dnn_features(
     he_pt = np.zeros((matches_len, 2), dtype=np.float32)
     he_desc = np.zeros((matches_len, desc_len), dtype=np.float32)
 
+    img_sz = np.array(he_img_shape)[:2][::-1]
+
     for idx, (pano, he, _) in enumerate(matches):
-        pano_pt[idx] = np.array(pano.keypoint.pt).flatten()
+        pano_pt[idx] = np.array(pano.keypoint.pt).flatten() / img_sz * 2 - 1
 
         pano_desc[idx] = np.array(pano.desc).flatten()
 
-        he_pt[idx] = np.array(he.keypoint.pt).flatten()
+        he_pt[idx] = np.array(he.keypoint.pt).flatten() / img_sz * 2 - 1
         he_desc[idx] = np.array(he.desc).flatten()
 
     return ((pano_pt, pano_desc), (he_pt, he_desc))
@@ -202,14 +204,17 @@ def registration_pipeline(img_path: Tuple[str], args):
     save_path = str(save_dir / "matches.tif")
     is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
 
-    matched_features = get_matched_dnn_features(matches)
+    matched_features = get_matched_dnn_features(matches, img_he.shape)
     if args.cache_feature:
         cache_matched_dnn_features(matched_features, data_id, args.method)
 
-    trans_matrix = calc_trans_matrix_by_matches(
-        matched_features[0], matched_features[1]
-    )
-    # trans_matrix = calc_trans_matrix_by_lstsq(matched_features[0], matched_features[1])
+    # trans_matrix = calc_trans_matrix_by_matches(
+    #     matched_features[0], matched_features[1]
+    # )
+    # trans_matrix, homo_matches = find_trans_matrix(
+    #     matched_features[0], matched_features[1]
+    # )
+    trans_matrix = calc_trans_matrix_by_lstsq(matched_features[0], matched_features[1])
     # trans_weight_path = str(dnn_dir / "trans" / "trans2d_r_t.pkl")
     # with open(trans_weight_path, "rb") as f:
     #     trans_matrix = pickle.load(f)

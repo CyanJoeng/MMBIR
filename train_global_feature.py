@@ -49,7 +49,7 @@ def data_pipeline(data_id):
         pano_features,
         str(cache_dir / "pano" / f"{data_id}_keypoints_x4.tif"),
     )
-    return he_features, pano_features
+    return he_features, pano_features, img_he.shape
 
 
 if __name__ == "__main__":
@@ -58,7 +58,7 @@ if __name__ == "__main__":
         exit(-1)
 
     # get model
-    model = net_siamese_global_feats(NUM_FEAT_INPUT, SPP_FEAT_LEN)
+    model = net_siamese_global_feats(NUM_FEAT_INPUT, SPP_FEAT_LEN, trans=True)
     model.compile(
         optimizer="adam",
         loss="binary_crossentropy",
@@ -85,7 +85,13 @@ if __name__ == "__main__":
     for data_id, (he_id, pano_id, label) in enumerate(
         [(0, 0, 0), (0, 1, 1), (1, 0, 1), (1, 1, 0)]
     ):
-        he_features, pano_features = dataset[he_id][0], dataset[pano_id][1]
+        he_features, pano_features, he_img_shape = (
+            dataset[he_id][0],
+            dataset[pano_id][1],
+            dataset[he_id][2],
+        )
+
+        he_img_sz = np.array(he_img_shape)[:2][::-1]
         for sample_id in range(SAMPLES):
             input_label[SAMPLES * data_id + sample_id] = label
 
@@ -100,15 +106,19 @@ if __name__ == "__main__":
                 input_he_feat[SAMPLES * data_id + sample_id, idx, :] = he_features[
                     sample_he[idx]
                 ].desc
-                input_he_pose[SAMPLES * data_id + sample_id, idx, :] = he_features[
-                    sample_he[idx]
-                ].keypoint.pt
+                input_he_pose[SAMPLES * data_id + sample_id, idx, :] = (
+                    np.array(he_features[sample_he[idx]].keypoint.pt) / he_img_sz * 2
+                    - 1
+                )
                 input_pano_feat[SAMPLES * data_id + sample_id, idx, :] = pano_features[
                     sample_pano[idx]
                 ].desc
-                input_pano_pose[SAMPLES * data_id + sample_id, idx, :] = pano_features[
-                    sample_pano[idx]
-                ].keypoint.pt
+                input_pano_pose[SAMPLES * data_id + sample_id, idx, :] = (
+                    np.array(pano_features[sample_pano[idx]].keypoint.pt)
+                    / he_img_sz
+                    * 2
+                    - 1
+                )
 
     dataset_len = input_label.shape[0]
     print(f"dataset len {dataset_len}")

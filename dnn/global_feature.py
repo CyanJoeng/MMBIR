@@ -125,28 +125,49 @@ def net_trans_pos(num_keypoints, feat_len):
 
 def net_siamese_global_feats(num_keypoints: int, feat_len: int, trans=False):
     N, F = num_keypoints, feat_len
+    global_feat_model = net_global_feature(num_keypoints, feat_len)
 
     input_0_feat = keras.Input(shape=(N, F))
     input_0_pos = keras.Input(shape=(N, 2))
     input_1_feat = keras.Input(shape=(N, F))
     input_1_pos = keras.Input(shape=(N, 2))
 
-    if trans:
-        trans_pos_model = net_trans_pos(num_keypoints, feat_len)
-        trans_r, trans_t = trans_pos_model(input_0_pos)
-
-        trans_0_pos = tf.matmul(input_0_pos, trans_r) + trans_t
-        # out_diff_pos = tf.reduce_mean(
-        #     tf.square(
-        #         tf.reduce_mean(trans_0_pos, axis=1) - tf.reduce_mean(input_1_pos, axis=1)
-        #     )
-        # )
-        input_0_pos = trans_0_pos
-
-    global_feat_model = net_global_feature(num_keypoints, feat_len)
-
     out_0 = global_feat_model((input_0_feat, input_0_pos))
     out_1 = global_feat_model((input_1_feat, input_1_pos))
+
+    print(f"[Siamese global]out 0 {out_0.shape}  out1 {out_1.shape}")
+
+    if trans:
+        g_feat_0 = tf.reshape(out_0, (-1, GLOBAL_FEAT_LEN, 1, 1))
+        g_feat_1 = tf.reshape(out_1, (-1, GLOBAL_FEAT_LEN, 1, 1))
+        concat_globale_feat = tf.concat((g_feat_0, g_feat_1), axis=-1)
+        trans_weight = keras.Sequential(
+            [
+                keras.layers.Conv2D(
+                    64, (1, 1), strides=1, padding="valid", activation="relu"
+                ),
+                keras.layers.Conv2D(
+                    128, (1, 1), strides=1, padding="valid", activation="relu"
+                ),
+                keras.layers.MaxPool2D(pool_size=(GLOBAL_FEAT_LEN, 1)),
+                keras.layers.Reshape((-1,)),
+                keras.layers.Dense(128, activation="relu"),
+                keras.layers.Dropout(rate=0.5),
+                keras.layers.Dense(6, activation="sigmoid"),
+                keras.layers.Reshape((3, 2)),
+            ]
+        )(concat_globale_feat)
+
+        print(f"[Siamese global]trans weight {trans_weight.shape}")
+
+        trans_0_pos = (
+            tf.matmul(input_0_pos, trans_weight[:, :2, :]) + trans_weight[:, 2:, :]
+        )
+
+        print(f"[Siamese global]trans 0 pos {trans_0_pos.shape}")
+        out_0 = global_feat_model((input_0_feat, trans_0_pos))
+        print(f"[Siamese global]out 0 {out_0.shape}  out1 {out_1.shape}")
+
     output = keras.layers.Lambda(lambda x: tf.square(x[0] - x[1]))([out_0, out_1])
     output = keras.layers.Dense(1, activation="sigmoid")(output)
 
