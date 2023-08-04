@@ -14,7 +14,7 @@ def show_keypoints(
     for kp in keypoints:
         pt = kp.keypoint.pt
         pt = np.array(pt).astype(np.int32) // scale
-        img_show = cv2.circle(img_show, pt, 3, (255, 0, 0), 1)
+        img_show = cv2.circle(img_show, pt, 5, (255, 0, 0), 2)
 
     if save_path is not None:
         print("keypoints save path: ", save_path)
@@ -47,7 +47,9 @@ def show_matches(
     img_show[: img_pano.shape[0], : img_pano.shape[1], :] = img_pano
     img_show[: img_he.shape[0], img_pano.shape[1] :, :] = img_he
 
-    for match in matches:
+    num_matches = len(matches)
+    for idx in np.random.choice(num_matches, min(50, num_matches), replace=False):
+        match = matches[idx]
         pt0, pt1 = match[0].keypoint.pt, match[1].keypoint.pt
         pt0, pt1 = (
             np.array(pt0).astype(np.int32) // scale,
@@ -55,7 +57,7 @@ def show_matches(
         )
         pt1[0] += img_pano.shape[1]
 
-        img_show = cv2.line(img_show, pt0, pt1, (255, 255, 0), 1)
+        img_show = cv2.line(img_show, pt0, pt1, (255, 255, 0), 2)
 
     is_exit = False
     if verbose:

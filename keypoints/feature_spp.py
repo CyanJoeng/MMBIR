@@ -1,12 +1,15 @@
 from typing_extensions import override
 from typing import List, Tuple
 
-from .feature import PointFeature, feature_match
 from pathlib import Path
 
 import numpy as np
 import cv2
 from tensorflow import keras
+
+
+if __name__ != "__main__":
+    from .feature import PointFeature, feature_match
 
 
 class SppKeypoint:
@@ -188,27 +191,33 @@ class Spp:
 
     @staticmethod
     def refine_fun(query_map, r, cs):
-        return query_map[r, cs[0]] < query_map[r, cs[1]] and query_map[r, cs[0]] < 10
+        return query_map[r, cs[0]] < query_map[r, cs[1]] and query_map[r, cs[0]] < 0.75
 
     @staticmethod
     def match(
         feat_moving: List[SppFeature],
         feat_fixed: List[SppFeature],
         top_count=30,
+        filter_fun=None,
         cache_dir="",
     ) -> List[Tuple[PointFeature, PointFeature, float]]:
         return feature_match(
             feat_moving,
             feat_fixed,
             top_count,
-            filter_fun=Spp.refine_fun,
+            filter_fun=filter_fun,
             cache_dir=cache_dir,
         )
 
 
 if __name__ == "__main__":
     from sys import argv, path as sys_path
-    from feature import feature_match
+    from pathlib import Path
+
+    sys_path.insert(0, Path(argv[0]).parent)
+
+    from keypoints.feature import PointFeature, feature_match
+    from utils.display import show_matches
 
     if len(argv) != 3:
         print(f"Usage: {argv[0]} image_he image_panorama")

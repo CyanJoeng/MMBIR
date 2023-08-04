@@ -53,6 +53,7 @@ def match(
     feats_fixed: List[Feature],
     count: int,
     method: None,
+    refine=False,
     verbose=False,
     cache_dir="",
 ) -> List[Tuple[Feature]]:
@@ -60,10 +61,15 @@ def match(
         print("feature match")
         print(f"\ttop count {count}")
 
+    filter_fun = None
+    if refine:
+        filter_fun = method.refine_fun
+
     pairs = method.match(
         feats_moving,
         feats_fixed,
         top_count=count,
+        filter_fun=filter_fun,
         cache_dir=cache_dir,
     )
     distances = np.array([m[2] for m in pairs])
@@ -184,7 +190,13 @@ def registration_pipeline(img_path: Tuple[str], args):
     img_he, feat_he = detect(img_path[1], "he")
 
     matches = match(
-        feat_pano, feat_he, args.count, method, verbose, cache_dir=str(save_dir)
+        feat_pano,
+        feat_he,
+        args.count,
+        method,
+        # refine=True,
+        verbose=verbose,
+        cache_dir=str(save_dir),
     )
     print("matched (pano-he) count  ", len(matches))
 
@@ -197,7 +209,7 @@ def registration_pipeline(img_path: Tuple[str], args):
     save_dir = save_dir / "dnn"
     save_dir.mkdir(exist_ok=True)
     matches = match(
-        feat_pano, feat_he, args.count, method, verbose, cache_dir=str(save_dir)
+        feat_pano, feat_he, args.count, method, verbose=verbose, cache_dir=str(save_dir)
     )
     print("dnn refined matched count  ", len(matches))
 
