@@ -26,6 +26,7 @@ def show_matches(
     img_he: np.ndarray,
     matches: List[Tuple[PointFeature]],
     save_path: str,
+    display_count: int = 50,
     verbose=False,
 ) -> int:
     """
@@ -48,7 +49,9 @@ def show_matches(
     img_show[: img_he.shape[0], img_pano.shape[1] :, :] = img_he
 
     num_matches = len(matches)
-    for idx in np.random.choice(num_matches, min(50, num_matches), replace=False):
+    for idx in np.random.choice(
+        num_matches, min(display_count, num_matches), replace=False
+    ):
         match = matches[idx]
         pt0, pt1 = match[0].keypoint.pt, match[1].keypoint.pt
         pt0, pt1 = (

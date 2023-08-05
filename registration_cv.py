@@ -1,28 +1,25 @@
 import argparse
 from pathlib import Path
+import pickle
 from typing import List, Tuple, overload
 
-import cv2
-from matplotlib import pyplot as plt
 import numpy as np
-import pickle
 
-from utils.dataset import load_image, read_dataset_folder
+from dnn.global_feature import get_trained_point_feat_net
+from dnn.transform import calc_trans_matrix_by_matches
 from keypoints.feature import Feature, PointFeature, feature_match
 from keypoints.feature_gspp import Gspp
 from keypoints.feature_orb import Orb
 from keypoints.feature_sift import Sift
 from keypoints.feature_spp import Spp
 from keypoints.transform import (
+    calc_trans_matrix_by_lstsq,
     filter_by_fundamental,
     find_trans_matrix,
     trans_image_by,
-    calc_trans_matrix_by_lstsq,
 )
-
-from dnn.global_feature import get_trained_point_feat_net
-from dnn.transform import calc_trans_matrix_by_matches
-
+from matplotlib import pyplot as plt
+from utils.dataset import load_image, read_dataset_folder
 from utils.display import *
 
 
