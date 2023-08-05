@@ -58,6 +58,33 @@ class Spp:
 
         self.model, args = Spp.create_point_feature_model()
         self.feat_count, self.pool_size, self.block_size = args
+        self.gaussian_kernels = {
+            shape: Spp._gen_guassian_kernal(shape)
+            for shape in [2**l for l in range(Spp.LAYERS)]
+        }
+
+    @staticmethod
+    def _gen_guassian_kernal(block_len, theta=0.2):
+        if block_len == 1:
+            return np.ones((1, 1))
+
+        block_size = 2**Spp.LAYERS
+        block_width = block_size // block_len
+        center = (block_len - 1) * 0.5
+
+        two_theta_2 = 2 * theta**2
+        scale = 1 / (np.pi * two_theta_2)
+
+        def gaussian(r, c):
+            r_off = (r - center) * block_width / block_size
+            c_off = (c - center) * block_width / block_size
+            return scale * np.exp(-(r_off**2 + c_off**2) / two_theta_2)
+
+        kernel = np.array(
+            [gaussian(r, c) for r in range(block_len) for c in range(block_len)]
+        )
+        kernel = kernel.reshape((block_len, block_len))
+        return kernel
 
     @staticmethod
     def create_point_feature_model():
@@ -117,6 +144,7 @@ class Spp:
 
         # resolve features for each pixel
         feature_map = np.zeros((feature_len, img_h, img_w), np.float32)
+        intensity_map = np.zeros((feature_len, img_h, img_w), np.float32)
         print("\tfeature shape", feature_map.shape)
         print("\tpool size", self.pool_size)
         for idx, (p_sz, feat) in enumerate(zip(self.pool_size, pool_results)):
@@ -135,37 +163,48 @@ class Spp:
 
             for idx_r in range(h_bs, img_h - h_bs + 1):
                 for idx_c in range(h_bs, img_w - h_bs + 1):
-                    feature_map[feat_st:feat_ed, idx_r, idx_c] = feat[
+                    block_feat = feat[
                         0,
                         range_st_off + idx_r : range_ed_off + idx_r : range_step,
                         range_st_off + idx_c : range_ed_off + idx_c : range_step,
                         0,
-                    ].flatten()
+                    ]
+
+                    block_feat = block_feat - feature_map[0, idx_r, idx_c]
+                    weighted_feat = (
+                        block_feat * self.gaussian_kernels[block_feat.shape[0]]
+                    )
+
+                    feature_map[feat_st:feat_ed, idx_r, idx_c] = block_feat.flatten()
+                    intensity_map[
+                        feat_st:feat_ed, idx_r, idx_c
+                    ] = weighted_feat.flatten()
 
                     # if idx_r == h_bs and idx_c == h_bs:
                     #     print(f"-->feature 0, 0  {feature_map[:, h_bs, h_bs]}")
 
-        feature_map = feature_map[1:, :, :] - feature_map[0, :, :]
+        # feature_map = feature_map[1:, :, :] - feature_map[0, :, :]
+        feature_map = feature_map[1:, :, :]
         # print(f"\t-->feature 0, 0  {feature_map[:, h_bs, h_bs]}")
         print("\tnew feature_map shape", feature_map.shape)
 
         # create intensity map
         # the ligher the biger norm of feature vector
-        feature_intensity_map = np.linalg.norm(feature_map[:, :, :], axis=0)
+        intensity_map = np.linalg.norm(intensity_map[:, :, :], axis=0)
         print(
             f"\tfeature_intensity_map \
-            {feature_intensity_map.min()} \
-            {feature_intensity_map.max()} \
-            {feature_intensity_map.mean()}"
+            {intensity_map.min()} \
+            {intensity_map.max()} \
+            {intensity_map.mean()}"
         )
-        feature_intensity_map /= np.max(feature_intensity_map)
+        intensity_map /= np.max(intensity_map)
         print(
-            f"\tfeature_intensity_map {feature_intensity_map.shape} -> \
-            {feature_intensity_map.shape}, \
-            {np.max(feature_intensity_map)}, \
-            {np.min(feature_intensity_map)}"
+            f"\tfeature_intensity_map {intensity_map.shape} -> \
+            {intensity_map.shape}, \
+            {np.max(intensity_map)}, \
+            {np.min(intensity_map)}"
         )
-        return feature_map, feature_intensity_map
+        return feature_map, intensity_map
 
     def _feature_selection(self, num_feat, feature_intensity_map, mask_size, cache_dir):
         print("\tfeature selection")
@@ -208,7 +247,9 @@ class Spp:
             num_feat = 300
 
         img_h, img_w, _ = self.img.shape
-        mask_size = max(img_h, img_w) // 50
+        mask_size = min(img_h, img_w) // 50
+        print(f"\tmask size {mask_size}")
+
         top_feature_pos = self._feature_selection(
             num_feat, feature_intensity_map, mask_size, cache_dir
         )
@@ -245,7 +286,7 @@ class Spp:
 
 if __name__ == "__main__":
     from keypoints.feature import PointFeature, feature_match
-    from utils.display import show_matches
+    from utils.display import show_matches, show_keypoints
     from utils.dataset import load_image
 
     if len(argv) != 3:
@@ -270,12 +311,15 @@ if __name__ == "__main__":
     print(f"pano shape {img_pano.shape}")
 
     spp = Spp(img_he)
-    spp.compute(num_feat=100, layers=5, cache_dir=(cache_dir / "he"))
+    print("gaussian_kernel 8 ", spp.gaussian_kernels[8])
+    spp.compute(num_feat=200, cache_dir=(cache_dir / "he"))
     he_features = spp.features
+    show_keypoints(img_he, he_features, str(cache_dir / f"keypoints_he.tif"))
 
     spp = Spp(img_pano)
-    spp.compute(layers=5, cache_dir=(cache_dir / "pano"))
+    spp.compute(num_feat=300, cache_dir=(cache_dir / "pano"))
     pano_features = spp.features
+    show_keypoints(img_pano, pano_features, str(cache_dir / f"keypoints_pano.tif"))
 
     print(f"feature count: he {len(he_features)}  pano {len(pano_features)}")
 
