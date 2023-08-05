@@ -187,3 +187,13 @@ def get_trained_point_feat_net(num_features) -> keras.Model:
         model.get_layer("global_feat_model").get_layer("point_feat_model").get_weights()
     )
     return point_feat_model
+
+
+def get_trained_global_feat_net(num_features) -> keras.Model:
+    model_path = Path("outputs") / "dnn" / "models" / "siamese_model.h5"
+    assert model_path.exists()
+
+    model = keras.models.load_model(model_path)
+    global_feat_model = net_global_feature(num_features, SPP_FEAT_LEN)
+    global_feat_model.set_weights(model.get_layer("global_feat_model").get_weights())
+    return global_feat_model

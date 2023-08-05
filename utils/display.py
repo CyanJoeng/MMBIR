@@ -10,11 +10,14 @@ def show_keypoints(
 ):
     scale = 1
 
+    radius = max(min(img.shape[0], img.shape[1]) // 100, 1)
+    thin = 2 if radius > 4 else 1
+
     img_show = cv2.resize(img, np.array(img.shape[:2])[::-1] // scale)
     for kp in keypoints:
         pt = kp.keypoint.pt
         pt = np.array(pt).astype(np.int32) // scale
-        img_show = cv2.circle(img_show, pt, 5, (255, 0, 0), 2)
+        img_show = cv2.circle(img_show, pt, radius, (255, 0, 0), thin)
 
     if save_path is not None:
         print("keypoints save path: ", save_path)
