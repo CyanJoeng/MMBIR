@@ -2,26 +2,28 @@ from tensorflow import keras
 import tensorflow as tf
 from pathlib import Path
 from dnn.model_parameters import *
+from dnn.knn_layer import KNNLayer
 
 
-def net_point_feature(num_keypoints: int, feat_len: int, trans_matrix=None):
+def net_point_feature(num_keypoints: int, feat_len: int, num_neighbor: int = 1):
     """
     input feat shape BxNxF
         B: batch size
         N: number of keypoints in a image
         F: length of keypoint feature
+        K: number of neighbors
     input pos shape BxNx2
         two dimensions in image coordinate
     outout feat shape BxNxOUT_FEAT_LEN
     """
 
-    N, F = num_keypoints, feat_len
-    input_feat = keras.Input(shape=(N, F), name="input_feat")
-    input_pos = keras.Input(shape=(N, 2), name="input_pos")
+    N, K, F = num_keypoints, num_neighbor, feat_len
+    input_feat = keras.Input(shape=(N, F, K), name="input_feat")
+    input_pos = keras.Input(shape=(N, 2, K), name="input_pos")
 
     out_feat = keras.Sequential(
         [
-            keras.layers.Reshape((N, F, 1)),
+            keras.layers.Reshape((N, F, K)),
             keras.layers.Conv2D(
                 128, (1, F), strides=1, padding="valid", activation="relu"
             ),
@@ -30,9 +32,9 @@ def net_point_feature(num_keypoints: int, feat_len: int, trans_matrix=None):
 
     out_pos = keras.Sequential(
         [
-            keras.layers.Reshape((N, 2, 1)),
+            keras.layers.Reshape((N, 2, K)),
             keras.layers.Conv2D(
-                64, (1, 2), strides=1, padding="valid", activation="relu"
+                32, (1, 2), strides=1, padding="valid", activation="relu"
             ),
         ]
     )(input_pos)
@@ -62,16 +64,34 @@ def net_point_feature(num_keypoints: int, feat_len: int, trans_matrix=None):
     return point_feat_model
 
 
-def net_global_feature(num_keypoints=0, feat_len=0):
+def net_global_feature(num_keypoints=0, feat_len=0, num_neighbor=1):
     N, F = num_keypoints, feat_len
-    input_feat = keras.Input(shape=(N, F), name="input_feat")
-    input_pos = keras.Input(shape=(N, 2), name="input_pos")
 
-    point_feat_model = net_point_feature(num_keypoints, feat_len)
+    point_feat_model = net_point_feature(num_keypoints, feat_len, num_neighbor)
+
+    input_feat = point_feat_model.inputs[0]
+    input_pos = point_feat_model.inputs[1]
 
     output_point_feat = point_feat_model((input_feat, input_pos))
     output_img_feat = keras.Sequential(
         [
+            keras.Sequential(
+                [
+                    keras.layers.Reshape((N, OUT_FEAT_LEN)),
+                    KNNLayer(num_neighbor),
+                    keras.layers.Conv2D(
+                        128,
+                        (1, OUT_FEAT_LEN),
+                        strides=1,
+                        padding="valid",
+                        activation="relu",
+                    ),
+                ]
+                if num_neighbor > 1
+                else [
+                    keras.layers.Reshape((N, 1, OUT_FEAT_LEN)),
+                ]
+            ),
             keras.layers.MaxPool2D(pool_size=(N, 1)),
             keras.layers.Reshape((-1,)),
             keras.layers.Dense(256, activation="relu"),
@@ -123,14 +143,16 @@ def net_trans_pos(num_keypoints, feat_len):
     return model
 
 
-def net_siamese_global_feats(num_keypoints: int, feat_len: int, trans=False):
-    N, F = num_keypoints, feat_len
-    global_feat_model = net_global_feature(num_keypoints, feat_len)
+def net_siamese_global_feats(
+    num_keypoints: int, feat_len: int, num_neighbor: int = 1, trans=False
+):
+    N, F, K = num_keypoints, feat_len, num_neighbor
+    global_feat_model = net_global_feature(num_keypoints, feat_len, num_neighbor)
 
-    input_0_feat = keras.Input(shape=(N, F))
-    input_0_pos = keras.Input(shape=(N, 2))
-    input_1_feat = keras.Input(shape=(N, F))
-    input_1_pos = keras.Input(shape=(N, 2))
+    input_0_feat = keras.Input(shape=(N, F, K))
+    input_0_pos = keras.Input(shape=(N, 2, K))
+    input_1_feat = keras.Input(shape=(N, F, K))
+    input_1_pos = keras.Input(shape=(N, 2, K))
 
     out_0 = global_feat_model((input_0_feat, input_0_pos))
     out_1 = global_feat_model((input_1_feat, input_1_pos))
@@ -161,7 +183,8 @@ def net_siamese_global_feats(num_keypoints: int, feat_len: int, trans=False):
         print(f"[Siamese global]trans weight {trans_weight.shape}")
 
         trans_0_pos = (
-            tf.matmul(input_0_pos, trans_weight[:, :2, :]) + trans_weight[:, 2:, :]
+            tf.matmul(input_0_pos[:, :, :, 0], trans_weight[:, :2, :])
+            + trans_weight[:, 2:, :]
         )
 
         print(f"[Siamese global]trans 0 pos {trans_0_pos.shape}")
@@ -177,23 +200,38 @@ def net_siamese_global_feats(num_keypoints: int, feat_len: int, trans=False):
     return siamese_model
 
 
-def get_trained_point_feat_net(num_features) -> keras.Model:
-    model_path = Path("outputs") / "dnn" / "models" / "siamese_model.h5"
+def get_trained_point_feat_net(num_features, num_neighbor) -> keras.Model:
+    model_path = (
+        Path("outputs") / "dnn" / "models" / f"siamese_model_n{num_neighbor}.h5"
+    )
+    print("Load model from ", str(model_path))
     assert model_path.exists()
 
-    model = keras.models.load_model(model_path)
-    point_feat_model = net_point_feature(num_features, SPP_FEAT_LEN)
+    with keras.utils.custom_object_scope(
+        {
+            "KNNLayer": KNNLayer,
+        }
+    ):
+        model = keras.models.load_model(model_path)
+    point_feat_model = net_point_feature(num_features, SPP_FEAT_LEN, num_neighbor)
     point_feat_model.set_weights(
         model.get_layer("global_feat_model").get_layer("point_feat_model").get_weights()
     )
     return point_feat_model
 
 
-def get_trained_global_feat_net(num_features) -> keras.Model:
-    model_path = Path("outputs") / "dnn" / "models" / "siamese_model.h5"
+def get_trained_global_feat_net(num_features, num_neighbor) -> keras.Model:
+    model_path = (
+        Path("outputs") / "dnn" / "models" / f"siamese_model_n{num_neighbor}.h5"
+    )
+    print("Load model from ", str(model_path))
     assert model_path.exists()
-
-    model = keras.models.load_model(model_path)
-    global_feat_model = net_global_feature(num_features, SPP_FEAT_LEN)
+    with keras.utils.custom_object_scope(
+        {
+            "KNNLayer": KNNLayer,
+        }
+    ):
+        model = keras.models.load_model(model_path)
+    global_feat_model = net_global_feature(num_features, SPP_FEAT_LEN, num_neighbor)
     global_feat_model.set_weights(model.get_layer("global_feat_model").get_weights())
     return global_feat_model

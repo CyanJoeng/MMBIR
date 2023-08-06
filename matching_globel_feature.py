@@ -1,6 +1,8 @@
 from dnn.global_feature import get_trained_global_feat_net
+from dnn.model_parameters import SPP_FEAT_LEN
 from keypoints.feature import feature_match
 from keypoints.feature_spp import Spp
+from keypoints.feature_gspp import Gspp, GsppFeature
 from utils.display import show_matches, show_keypoints
 from utils.dataset import load_image
 
@@ -10,10 +12,16 @@ import numpy as np
 import cv2
 
 
+FEATURE_METHOD = Gspp
+# NEIGHBOR = 1
+NEIGHBOR = GsppFeature.N_EDGE
+
+
 def get_image_features(image, cache_dir, label, num_feat=200):
-    spp = Spp(image)
-    spp.compute(num_feat=num_feat, cache_dir=(cache_dir / label))
-    features = spp.features
+    method = FEATURE_METHOD(image)
+    method.compute(num_feat=num_feat, cache_dir=str(cache_dir / label))
+    features = method.features
+
     print(f"feature count: {label} {len(features)}")
     show_keypoints(image, features, str(cache_dir / f"keypoints_{label}.tif"))
     return features
@@ -50,16 +58,33 @@ def img_block_selection(image, pre_block, step=0.1):
 
 def matching_global_block(global_feature, block_feature, model):
     num_feat_input = len(global_feature)
-    feat_len = global_feature[0].desc.shape[0]
+    feat_len = SPP_FEAT_LEN
 
-    input_feat = np.zeros((2, num_feat_input, feat_len))
-    input_pose = np.zeros((2, num_feat_input, 2))
+    input_feat = np.zeros((2, num_feat_input, feat_len, NEIGHBOR))
+    input_pose = np.zeros((2, num_feat_input, 2, NEIGHBOR))
+
+    def set_desc(data, feature):
+        if FEATURE_METHOD is Spp:
+            data[:, 0] = feature.desc
+        else:
+            for idx in range(NEIGHBOR):
+                data[:, idx] = feature.desc[idx]["desc"]
+
+    def set_pos(data, feature, scale=1):
+        if FEATURE_METHOD is Spp:
+            center = np.array(feature.keypoint.pt)
+            data[:, 0] = center / scale * 2 - 1
+        else:
+            center = np.array(feature.keypoint.pt)
+            for idx in range(NEIGHBOR):
+                off = np.array(feature.desc[idx]["vec"])
+                data[:, idx] = (off + center) / scale * 2 - 1
 
     # create dataset by random sampling
     for data_id, data in enumerate([global_feature, block_feature]):
         for feat_id in range(num_feat_input):
-            input_feat[data_id, feat_id, :] = data[feat_id].desc
-            input_pose[data_id, feat_id, :] = data[feat_id].keypoint.pt
+            set_desc(input_feat[data_id, feat_id], data[feat_id])
+            set_pos(input_pose[data_id, feat_id], data[feat_id])
 
     feat_output = model.predict((input_feat, input_pose))
     feat_output = np.array(feat_output)
@@ -71,7 +96,7 @@ def main(image, cache_dir, num_feat=200):
     img_h, img_w = image.shape[:2]
     global_feat = get_image_features(image, cache_dir, "global", num_feat)
 
-    feat_net = get_trained_global_feat_net(num_feat)
+    feat_net = get_trained_global_feat_net(num_feat, NEIGHBOR)
     feat_net.summary()
 
     step = min(img_h, img_w) / max(img_h, img_w) / 2
@@ -124,4 +149,4 @@ if __name__ == "__main__":
     print(f"pano shape {img_pano.shape}")
 
     main(img_he, (cache_dir / "he"))
-    # main(img_pano, (cache_dir / "pano"))
+    main(img_pano, (cache_dir / "pano"))

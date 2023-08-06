@@ -1,18 +1,24 @@
+from pathlib import Path
+import pickle
 from typing import List, Tuple
 from typing_extensions import override
 
-import pickle
 import cv2
-from .feature import PointFeature, feature_match
-from .feature_spp import Spp, SppFeature
-
 import numpy as np
 
-from pathlib import Path
+if __name__ != "__main__":
+    from .feature import PointFeature, feature_match
+    from .feature_spp import Spp, SppFeature
+else:
+    from sys import argv, path as sys_path
+
+    sys_path.insert(0, str(Path(sys_path[0]).parent))
+    from keypoints.feature import PointFeature, feature_match
+    from keypoints.feature_spp import Spp, SppFeature
 
 
 class GsppFeature(PointFeature):
-    N_EDGE = 3
+    N_EDGE = 5
 
     def __init__(self, center_spp: SppFeature, edge_spps: List[SppFeature]) -> None:
         self._center = center_spp
@@ -142,33 +148,42 @@ class Gspp:
         feat_moving: List[GsppFeature],
         feat_fixed: List[GsppFeature],
         top_count=30,
+        filter_fun=None,
         cache_dir="",
     ) -> List[Tuple[PointFeature, PointFeature, float]]:
         return feature_match(
             feat_moving,
             feat_fixed,
             top_count,
-            filter_fun=Gspp.refine_fun,
+            filter_fun=filter_fun,
             cache_dir=cache_dir,
         )
 
 
 if __name__ == "__main__":
-    from sys import argv, path as sys_path
-    from feature import feature_match
+    from utils.display import show_matches
+    from utils.dataset import load_image
 
     if len(argv) != 3:
-        print(f"Usage: {argv[0]} image_he image_panorama")
+        print(f"Usage: {argv[0]} dataset_path data_id")
         exit(-1)
 
-    data_id = Path(argv[1]).parts[-2]
-    cache_dir = Path(sys_path[0]).parent / "outputs" / "cache" / "gspp" / data_id
+    dataset_path = argv[1]
+    data_id = argv[2]
+    main_id = data_id.split("_")[0]
+    cache_dir = Path("outputs") / "cache" / "gspp" / data_id
     cache_dir.mkdir(parents=True, exist_ok=True)
     (cache_dir / "he").mkdir(parents=True, exist_ok=True)
     (cache_dir / "pano").mkdir(parents=True, exist_ok=True)
 
-    img_he = cv2.imread(argv[1], cv2.IMREAD_ANYCOLOR)
-    img_pano = cv2.imread(argv[2], cv2.IMREAD_ANYCOLOR)
+    img_he_path = Path(dataset_path) / "H&E_IMC" / "Pair" / data_id / f"HE{main_id}.tif"
+    img_he = load_image(str(img_he_path), downsize=4)
+    print(f"he shape {img_he.shape}")
+    img_pano_path = (
+        Path(dataset_path) / "H&E_IMC" / "Pair" / data_id / f"{main_id}_panorama.tif"
+    )
+    img_pano = load_image(str(img_pano_path), downsize=4)
+    print(f"pano shape {img_pano.shape}")
 
     gspp = Gspp(img_he)
     gspp.compute(
@@ -185,6 +200,7 @@ if __name__ == "__main__":
 
     print(f"feature count: he {len(he_features)}  pano {len(pano_features)}")
 
-    feature_match(
+    matches = feature_match(
         pano_features, he_features, cache_dir=str(cache_dir), filter_fun=Gspp.refine_fun
     )
+    show_matches(img_pano, img_he, matches, save_path=str(cache_dir / "matches.tif"))

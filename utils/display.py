@@ -79,7 +79,7 @@ def show_matches(
 
 def show_trans_img(img_he: np.ndarray, trans_pts: np.ndarray, save_path: str):
     h, w, _ = img_he.shape
-    print(show_trans_img)
+    print("show_trans_img")
 
     concat_img = np.zeros((h, w + w, 3), np.uint8)
     concat_img[:, w:, :] = img_he

@@ -7,13 +7,12 @@ import numpy as np
 from tensorflow import keras
 
 
-if __name__ != "__main__":
-    from .feature import PointFeature, feature_match
-else:
+if __name__ == "__main__":
     from sys import argv, path as sys_path
 
     sys_path.insert(0, str(Path(sys_path[0]).parent))
-    from keypoints.feature import PointFeature, feature_match
+
+from keypoints.feature import PointFeature, feature_match
 
 
 class SppKeypoint:

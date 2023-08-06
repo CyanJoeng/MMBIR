@@ -6,6 +6,7 @@ import tensorflow as tf
 
 from dnn.model_parameters import *
 from dnn.global_feature import net_siamese_global_feats
+from keypoints.feature_gspp import Gspp, GsppFeature
 
 from utils.dataset import load_image
 from utils.display import show_keypoints
@@ -15,70 +16,79 @@ from keypoints.feature_spp import Spp
 EPOCHS = 40
 BATCH_SIZE = 2
 
+FEATURE_METHOD = Spp
+NEIGHBOR = 1
+# NEIGHBOR = GsppFeature.N_EDGE
 
-def data_pipeline(data_id):
-    data_dir = Path(argv[0]).parent.parent / "datasets" / "H&E_IMC" / "Pair" / data_id
+DOWN_SIZE = 4
+
+
+def method_str():
+    if FEATURE_METHOD is Spp:
+        return "spp"
+    else:
+        return "gspp"
+
+
+def detect_features(img_path, cache_dir, label):
+    img = load_image(img_path, verbose=True, downsize=DOWN_SIZE)
+
+    method = FEATURE_METHOD(img)
+    method.compute(num_feat=NUM_FEAT_DETECT, cache_dir=str(cache_dir / label))
+    features = method.features
+
+    show_keypoints(
+        img,
+        features,
+        str(cache_dir / label / f"keypoints_x{DOWN_SIZE}.tif"),
+    )
+    return features, img.shape
+
+
+def data_pipeline(dataset_folder, data_id, cache_dir):
+    data_dir = Path(dataset_folder) / "H&E_IMC" / "Pair" / data_id
     data_dir = Path(data_dir).absolute()
     main_id = str(data_id).split("_")[0]
 
+    cache_dir = Path(cache_dir / method_str() / data_id)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
     img_path = str(data_dir / f"HE{main_id}.tif")
-    img_he = load_image(img_path, verbose=True, downsize=DOWN_SIZE)
+    he_features, img_he_shape = detect_features(img_path, cache_dir, "he")
 
     img_path = str(data_dir / f"{main_id}_panorama.tif")
-    img_pano = load_image(img_path, verbose=True, downsize=DOWN_SIZE)
+    pano_features, _ = detect_features(img_path, cache_dir, "pano")
 
-    print(f"Data id {data_id} image size he:{img_he.shape} pano:{img_pano.shape}")
-
-    spp = Spp(img_he)
-    spp_cache_dir = Path(cache_dir / "he" / data_id)
-    spp_cache_dir.mkdir(parents=True, exist_ok=True)
-    spp.compute(num_feat=NUM_FEAT_DETECT, layers=5, cache_dir=spp_cache_dir)
-    he_features = spp.features
-
-    spp = Spp(img_pano)
-    spp_cache_dir = Path(cache_dir / "pano" / data_id)
-    spp_cache_dir.mkdir(parents=True, exist_ok=True)
-    spp.compute(num_feat=NUM_FEAT_DETECT, layers=5, cache_dir=spp_cache_dir)
-    pano_features = spp.features
-
-    show_keypoints(
-        img_he, he_features, str(cache_dir / "he" / f"{data_id}_keypoints_x4.tif")
-    )
-    show_keypoints(
-        img_pano,
-        pano_features,
-        str(cache_dir / "pano" / f"{data_id}_keypoints_x4.tif"),
-    )
-    return he_features, pano_features, img_he.shape
+    return he_features, pano_features, img_he_shape
 
 
-if __name__ == "__main__":
-    if len(argv) != 3:
-        print(f"Usage: {argv[0]} data_id_0 data_id_1")
-        exit(-1)
+def set_desc(data, feature):
+    if FEATURE_METHOD is Spp:
+        data[:, 0] = feature.desc
+    else:
+        for idx in range(NEIGHBOR):
+            data[:, idx] = feature.desc[idx]["desc"]
 
-    # get model
-    model = net_siamese_global_feats(NUM_FEAT_INPUT, SPP_FEAT_LEN, trans=True)
-    model.compile(
-        optimizer="adam",
-        loss="binary_crossentropy",
-        metrics=[keras.metrics.BinaryAccuracy()],
-    )
-    model.summary(expand_nested=True)
 
-    # create dataset
-    data_id_0, data_id_1 = argv[1], argv[2]
-    cache_dir = Path("outputs") / "cache" / "dnn" / f"{data_id_0}-{data_id_1}-x4"
-    output_dir = Path("outputs") / "dnn" / f"{data_id_0}-{data_id_1}-x4"
+def set_pos(data, feature, scale=1):
+    if FEATURE_METHOD is Spp:
+        center = np.array(feature.keypoint.pt)
+        data[:, 0] = center / scale * 2 - 1
+    else:
+        center = np.array(feature.keypoint.pt)
+        for idx in range(NEIGHBOR):
+            off = np.array(feature.desc[idx]["vec"])
+            data[:, idx] = (off + center) / scale * 2 - 1
 
-    dataset = (data_pipeline(data_id_0), data_pipeline(data_id_1))
-    feat_len = len(dataset[0][0][0].desc)
+
+def create_train_dataset(dataset):
+    feat_len = SPP_FEAT_LEN
     print(f"feature len {feat_len}")
 
-    input_he_feat = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, feat_len))
-    input_he_pose = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, 2))
-    input_pano_feat = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, feat_len))
-    input_pano_pose = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, 2))
+    input_he_feat = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, feat_len, NEIGHBOR))
+    input_he_pose = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, 2, NEIGHBOR))
+    input_pano_feat = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, feat_len, NEIGHBOR))
+    input_pano_pose = np.zeros((SAMPLES * 4, NUM_FEAT_INPUT, 2, NEIGHBOR))
     input_label = np.zeros((SAMPLES * 4,), dtype=np.int32)
 
     # create dataset by random sampling
@@ -103,54 +113,79 @@ if __name__ == "__main__":
             )
 
             for idx in range(NUM_FEAT_INPUT):
-                input_he_feat[SAMPLES * data_id + sample_id, idx, :] = he_features[
-                    sample_he[idx]
-                ].desc
-                input_he_pose[SAMPLES * data_id + sample_id, idx, :] = (
-                    np.array(he_features[sample_he[idx]].keypoint.pt) / he_img_sz * 2
-                    - 1
+                set_desc(
+                    input_he_feat[SAMPLES * data_id + sample_id, idx],
+                    he_features[sample_he[idx]],
                 )
-                input_pano_feat[SAMPLES * data_id + sample_id, idx, :] = pano_features[
-                    sample_pano[idx]
-                ].desc
-                input_pano_pose[SAMPLES * data_id + sample_id, idx, :] = (
-                    np.array(pano_features[sample_pano[idx]].keypoint.pt)
-                    / he_img_sz
-                    * 2
-                    - 1
+                set_pos(
+                    input_he_pose[SAMPLES * data_id + sample_id, idx],
+                    he_features[sample_he[idx]],
+                    he_img_sz,
                 )
 
-    dataset_len = input_label.shape[0]
+                set_desc(
+                    input_pano_feat[SAMPLES * data_id + sample_id, idx],
+                    pano_features[sample_pano[idx]],
+                )
+                set_pos(
+                    input_pano_pose[SAMPLES * data_id + sample_id, idx],
+                    pano_features[sample_pano[idx]],
+                    he_img_sz,
+                )
+
+    return (input_he_feat, input_he_pose, input_pano_feat, input_pano_pose), input_label
+
+
+if __name__ == "__main__":
+    if len(argv) != 4:
+        print(f"Usage: {argv[0]} dataset_folder data_id_0 data_id_1")
+        exit(-1)
+
+    # get model
+    model = net_siamese_global_feats(NUM_FEAT_INPUT, SPP_FEAT_LEN, NEIGHBOR)
+    model.compile(
+        optimizer="adam",
+        loss="binary_crossentropy",
+        metrics=[keras.metrics.BinaryAccuracy()],
+    )
+    model.summary(expand_nested=True)
+
+    # create dataset
+    dataset_folder = argv[1]
+    data_id_0, data_id_1 = argv[2], argv[3]
+    cache_dir = (
+        Path("outputs") / "cache" / "dnn" / f"{data_id_0}-{data_id_1}-x{DOWN_SIZE}"
+    )
+    output_dir = Path("outputs") / "dnn" / f"{data_id_0}-{data_id_1}-x{DOWN_SIZE}"
+
+    dataset = (
+        data_pipeline(dataset_folder, data_id_0, cache_dir),
+        data_pipeline(dataset_folder, data_id_1, cache_dir),
+    )
+    dataset = create_train_dataset(dataset)
+    dataset_len = dataset[1].shape[0]
     print(f"dataset len {dataset_len}")
+
     dataset = tf.data.Dataset.zip(
         (
             tf.data.Dataset.zip(
-                tuple(
-                    [
-                        tf.data.Dataset.from_tensor_slices(data)
-                        for data in (
-                            input_he_feat,
-                            input_he_pose,
-                            input_pano_feat,
-                            input_pano_pose,
-                        )
-                    ]
-                )
+                tuple([tf.data.Dataset.from_tensor_slices(data) for data in dataset[0]])
             ),
-            tf.data.Dataset.from_tensor_slices(input_label),
+            tf.data.Dataset.from_tensor_slices(dataset[1]),
         )
     )
     dataset = dataset.shuffle(buffer_size=dataset_len)
     dataset = dataset.batch(batch_size=BATCH_SIZE)
 
-    model.fit(
-        dataset,
-        epochs=EPOCHS,
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_path = str(output_dir / f"siamese_model_n{NEIGHBOR}.h5")
+    model_save_cb = keras.callbacks.ModelCheckpoint(
+        model_path, "binary_accuracy", save_best_only=True, mode="max"
     )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    model_path = str(output_dir / "siamese_model.h5")
-    model.save(model_path)
+    model.fit(dataset, epochs=EPOCHS, callbacks=[model_save_cb])
+
+    # model.save(model_path)
     print(f"Save model to {model_path}")
 
     # model = keras.models.load_model(str(output_dir / "siamese_model.h5"))

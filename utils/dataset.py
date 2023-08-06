@@ -8,7 +8,7 @@ def read_dataset_folder(folder, sample_name=None, verbose=False):
     folder_pattern = "[0-9]*_[0-9]*" if sample_name is None else sample_name
 
     for path in sorted(Path(folder).glob(folder_pattern)):
-        files = sorted(path.glob("*"))
+        files = sorted(path.glob("*.tif"))
         if verbose:
             print(f"load file {(str(files[0]), str(files[1]))}")
         yield (str(files[0]), str(files[1]))

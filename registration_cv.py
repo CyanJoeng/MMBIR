@@ -6,12 +6,13 @@ from typing import List, Tuple, overload
 import numpy as np
 
 from dnn.global_feature import get_trained_point_feat_net
+from dnn.model_parameters import SPP_FEAT_LEN
 from dnn.transform import calc_trans_matrix_by_matches
 from keypoints.feature import Feature, PointFeature, feature_match
-from keypoints.feature_gspp import Gspp
+from keypoints.feature_gspp import Gspp, GsppFeature
 from keypoints.feature_orb import Orb
 from keypoints.feature_sift import Sift
-from keypoints.feature_spp import Spp
+from keypoints.feature_spp import Spp, SppFeature
 from keypoints.transform import (
     calc_trans_matrix_by_lstsq,
     filter_by_fundamental,
@@ -25,6 +26,11 @@ from utils.display import *
 
 def get_method(name: str = ""):
     methods = {"orb": Orb, "sift": Sift, "spp": Spp, "gspp": Gspp}
+    return methods[name] if name != "" else methods.keys()
+
+
+def get_num_neighbor(name: str = ""):
+    methods = {"orb": 1, "sift": 1, "spp": 1, "gspp": GsppFeature.N_EDGE}
     return methods[name] if name != "" else methods.keys()
 
 
@@ -86,28 +92,52 @@ def point_feat_dnn_trans(
     feats_moving: List[Feature],
     feats_fixed: List[Feature],
     method: Orb | Sift | Spp | Gspp,
+    num_neighbor,
 ):
     len_mov, len_fix = len(feats_moving), len(feats_fixed)
     assert len_mov == len_fix
     num_feat_input = len_mov
-    feat_len = feats_moving[0].desc.shape[0]
+    feat_len = SPP_FEAT_LEN
 
-    input_feat = np.zeros((2, num_feat_input, feat_len))
-    input_pose = np.zeros((2, num_feat_input, 2))
+    input_feat = np.zeros((2, num_feat_input, feat_len, num_neighbor))
+    input_pose = np.zeros((2, num_feat_input, 2, num_neighbor))
+
+    def set_desc(data, feature):
+        if method is Spp:
+            data[:, 0] = feature.desc
+        else:
+            for idx in range(num_neighbor):
+                data[:, idx] = feature.desc[idx]["desc"]
+
+    def set_pos(data, feature, scale=1):
+        if method is Spp:
+            center = np.array(feature.keypoint.pt)
+            data[:, 0] = center / scale * 2 - 1
+        else:
+            center = np.array(feature.keypoint.pt)
+            for idx in range(num_neighbor):
+                off = np.array(feature.desc[idx]["vec"])
+                data[:, idx] = (off + center) / scale * 2 - 1
 
     # create dataset by random sampling
     for data_id, data in enumerate([feats_moving, feats_fixed]):
         for feat_id in range(num_feat_input):
-            input_feat[data_id, feat_id, :] = data[feat_id].desc
-            input_pose[data_id, feat_id, :] = data[feat_id].keypoint.pt
+            set_desc(input_feat[data_id, feat_id], data[feat_id])
+            set_pos(input_pose[data_id, feat_id], data[feat_id])
 
-    model = get_trained_point_feat_net(num_feat_input)
+    model = get_trained_point_feat_net(num_feat_input, num_neighbor)
     feat_output = model.predict((input_feat, input_pose))
     feat_output = np.array(feat_output)
 
-    for data_id, data in enumerate([feats_moving, feats_fixed]):
-        for feat_id in range(num_feat_input):
-            data[feat_id].desc = feat_output[data_id, feat_id, :]
+    new_feat_moving = [
+        SppFeature(feats_moving[feat_id].keypoint.pt, feat_output[0, feat_id])
+        for feat_id in range(num_feat_input)
+    ]
+    new_feat_fixed = [
+        SppFeature(feats_fixed[feat_id].keypoint.pt, feat_output[1, feat_id])
+        for feat_id in range(num_feat_input)
+    ]
+    return new_feat_moving, new_feat_fixed
 
 
 def get_matched_dnn_features(
@@ -200,13 +230,17 @@ def registration_pipeline(img_path: Tuple[str], args):
     save_path = str(save_dir / "matches.tif")
     is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
 
-    point_feat_dnn_trans(feat_pano, feat_he, method)
+    # dnn refine desc
+    feat_pano, feat_he = point_feat_dnn_trans(
+        feat_pano, feat_he, method, get_num_neighbor(args.method)
+    )
     print(f"feat len -> {feat_pano[0].desc.shape}")
 
+    # match new desc with Spp matching method
     save_dir = save_dir / "dnn"
     save_dir.mkdir(exist_ok=True)
     matches = match(
-        feat_pano, feat_he, args.count, method, verbose=verbose, cache_dir=str(save_dir)
+        feat_pano, feat_he, args.count, Spp, verbose=verbose, cache_dir=str(save_dir)
     )
     print("dnn refined matched count  ", len(matches))
 
