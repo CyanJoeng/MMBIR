@@ -2,7 +2,7 @@ from tensorflow import keras
 import tensorflow as tf
 from pathlib import Path
 from dnn.model_parameters import *
-from dnn.knn_layer import KNNLayer
+from dnn.knn_self_layer import KNNSelfLayer
 
 
 def net_point_feature(num_keypoints: int, feat_len: int, num_neighbor: int = 1):
@@ -78,7 +78,7 @@ def net_global_feature(num_keypoints=0, feat_len=0, num_neighbor=1):
             keras.Sequential(
                 [
                     keras.layers.Reshape((N, OUT_FEAT_LEN)),
-                    KNNLayer(num_neighbor),
+                    KNNSelfLayer(num_neighbor),
                     keras.layers.Conv2D(
                         128,
                         (1, OUT_FEAT_LEN),
@@ -209,7 +209,7 @@ def get_trained_point_feat_net(num_features, num_neighbor) -> keras.Model:
 
     with keras.utils.custom_object_scope(
         {
-            "KNNLayer": KNNLayer,
+            "KNNLayer": KNNSelfLayer,
         }
     ):
         model = keras.models.load_model(model_path)
@@ -228,7 +228,7 @@ def get_trained_global_feat_net(num_features, num_neighbor) -> keras.Model:
     assert model_path.exists()
     with keras.utils.custom_object_scope(
         {
-            "KNNLayer": KNNLayer,
+            "KNNLayer": KNNSelfLayer,
         }
     ):
         model = keras.models.load_model(model_path)

@@ -74,10 +74,16 @@ def calc_trans_matrix_by_lstsq(data_pano, data_he):
     return affine_matrix
 
 
-def trans_image_by(trans_matrix, image) -> np.ndarray:
+def trans_image_by(trans_matrix, images) -> np.ndarray:
     print("trans image")
 
-    h, w, _ = image.shape
+    img_pano, img_he = images
+
+    h, w, _ = img_pano.shape
+    colour = np.float32([img_pano[r, c] for r in range(h) for c in range(w)]).reshape(
+        -1, 3
+    )
+
     pts = (
         np.float32([[c, r] for r in range(h) for c in range(w)]).reshape(-1, 2)
         / np.array([w, h])
@@ -87,13 +93,13 @@ def trans_image_by(trans_matrix, image) -> np.ndarray:
     pts = np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=-1)
     # dst = cv2.perspectiveTransform(pts, trans_matrix)
     dst = pts @ trans_matrix
+
+    h, w, _ = img_he.shape
+    # dst = dst[:, :2]
     dst = (dst[:, :2] + 1) * 0.5 * np.array([w, h])
 
-    colour = np.float32([image[r, c] for r in range(h) for c in range(w)]).reshape(
-        -1, 3
-    )
     print(f"\tdata shape  dst {dst.shape} colour {colour.shape}")
     data = np.concatenate((dst, colour), axis=-1)
     print("\ttrans_image data shape ", data.shape)
-    print("\ttrans offset ", trans_matrix[2, :2] * np.array([w, h]))
+    print("\ttrans offset ", trans_matrix[2, :2] / 2 * np.array([w, h]))
     return data

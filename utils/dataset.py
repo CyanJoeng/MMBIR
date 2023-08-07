@@ -15,15 +15,17 @@ def read_dataset_folder(folder, sample_name=None, verbose=False):
 
 
 def load_image(path: str, verbose=False, downsize=1, to_gray=False):
-    if verbose:
-        print(f"read img {path}")
-
+    print(f"load image")
     img = cv2.imread(path, cv2.IMREAD_ANYCOLOR)
     h, w, _ = img.shape
     img = cv2.resize(img, (w // downsize, h // downsize))
 
     if to_gray:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    if verbose:
+        print(f"\tread img {path}")
+        print(f"\timg shape {img.shape}")
 
     return img
 

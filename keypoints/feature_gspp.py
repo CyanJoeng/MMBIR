@@ -18,7 +18,7 @@ else:
 
 
 class GsppFeature(PointFeature):
-    N_EDGE = 5
+    N_EDGE = 3
 
     def __init__(self, center_spp: SppFeature, edge_spps: List[SppFeature]) -> None:
         self._center = center_spp

@@ -2,13 +2,13 @@ from tensorflow import keras
 import tensorflow as tf
 
 
-class KNNLayer(keras.layers.Layer):
+class KNNSelfLayer(keras.layers.Layer):
     def __init__(self, k, **kwargs):
-        super(KNNLayer, self).__init__(**kwargs)
+        super(KNNSelfLayer, self).__init__(**kwargs)
         self.k = k
 
     def build(self, input_shape):
-        super(KNNLayer, self).build(input_shape)
+        super(KNNSelfLayer, self).build(input_shape)
 
     def call(self, inputs):
         """

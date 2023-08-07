@@ -1,3 +1,4 @@
+from pathlib import Path
 import cv2
 import numpy as np
 from typing import List, Tuple
@@ -8,6 +9,7 @@ from keypoints.feature import PointFeature
 def show_keypoints(
     img: np.ndarray, keypoints: List[PointFeature], save_path: str = None
 ):
+    print("show keypoints")
     scale = 1
 
     radius = max(min(img.shape[0], img.shape[1]) // 100, 1)
@@ -19,8 +21,11 @@ def show_keypoints(
         pt = np.array(pt).astype(np.int32) // scale
         img_show = cv2.circle(img_show, pt, radius, (255, 0, 0), thin)
 
+    print(f"\tkeypoints image shape {img_show.shape}")
+    print(f"\tkeypoints count {len(keypoints)}")
     if save_path is not None:
-        print("keypoints save path: ", save_path)
+        print("\tkeypoints save path: ", save_path)
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(save_path, img_show)
 
 
@@ -81,8 +86,8 @@ def show_trans_img(img_he: np.ndarray, trans_pts: np.ndarray, save_path: str):
     h, w, _ = img_he.shape
     print("show_trans_img")
 
-    concat_img = np.zeros((h, w + w, 3), np.uint8)
-    concat_img[:, w:, :] = img_he
+    overlay_img = np.zeros((h, w, 3), np.uint8)
+    overlay_img[:, :, :] = img_he
     for data in trans_pts:
         x, y, b, g, r = data
         x += 0.5
@@ -91,7 +96,7 @@ def show_trans_img(img_he: np.ndarray, trans_pts: np.ndarray, save_path: str):
             continue
         x, y = int(x), int(y)
 
-        concat_img[y, x] = np.array([b, g, r], np.uint8)
+        overlay_img[y, x, 1] = np.uint8(g * 0.5 + overlay_img[y, x, 1] * 0.5)
 
     print("save path: ", save_path)
-    cv2.imwrite(save_path, concat_img)
+    cv2.imwrite(save_path, overlay_img)
