@@ -3,3 +3,4 @@ __pycache__/
 .Rhistory
 datasets
 outputs
+.DS_Store

@@ -30,6 +30,28 @@ def filter_by_fundamental(matches: List[Tuple[PointFeature]]):
     return F_M, refined_matches
 
 
+def filter_by_homography(matches: List[Tuple[PointFeature]]):
+    if len(matches) > MIN_HOMO_COUNT:
+        src_pts = np.float32([m[0].keypoint.pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([m[1].keypoint.pt for m in matches]).reshape(-1, 1, 2)
+        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 10.0)
+        matchesMask = mask.ravel().tolist()
+    else:
+        print(
+            "Not enough matches are found - {}/{}".format(len(matches), MIN_FUNDA_COUNT)
+        )
+        M = None
+        matchesMask = None
+
+    print("match mask:", matchesMask)
+    print("homo matrix:\n", M)
+
+    refined_matches = [match for match, mask in zip(matches, matchesMask) if mask == 1]
+    print(f"\tfinal matches size {len(matches)} -> {len(refined_matches)}")
+
+    return M, refined_matches
+
+
 def find_trans_matrix(data_pano, data_he):
     input_pano_pos = np.array(data_pano[0]).reshape((-1, 2)).astype(np.float32)
     input_he_pos = np.array(data_he[0]).reshape((-1, 2)).astype(np.float32)

@@ -86,6 +86,7 @@ def show_trans_img(img_he: np.ndarray, trans_pts: np.ndarray, save_path: str):
     h, w, _ = img_he.shape
     print("show_trans_img")
 
+    sampling_img = np.zeros((h, w, 3), np.uint8)
     overlay_img = np.zeros((h, w, 3), np.uint8)
     overlay_img[:, :, :] = img_he
     for data in trans_pts:
@@ -96,7 +97,9 @@ def show_trans_img(img_he: np.ndarray, trans_pts: np.ndarray, save_path: str):
             continue
         x, y = int(x), int(y)
 
+        sampling_img[y, x] = np.uint8(g)
         overlay_img[y, x, 1] = np.uint8(g * 0.5 + overlay_img[y, x, 1] * 0.5)
 
-    print("save path: ", save_path)
+    print("\tsave path: ", save_path)
+    cv2.imwrite(save_path + ".sampling_img.tif", sampling_img)
     cv2.imwrite(save_path, overlay_img)

@@ -10,8 +10,8 @@ from utils.dataset import load_image
 import SimpleITK as sitk
 
 
-def data_pipeline(data_id):
-    data_dir = Path(argv[0]).parent.parent / "datasets" / "H&E_IMC" / "Pair" / data_id
+def data_pipeline(dataset_folder, data_id):
+    data_dir = Path(dataset_folder) / "H&E_IMC" / "Pair" / data_id
     data_dir = Path(data_dir).absolute()
     main_id = str(data_id).split("_")[0]
 
@@ -270,26 +270,43 @@ def get_overley(fixed, moving, outTx, out_path):
     cimg = sitk.Compose(simg1, simg2, simg1 // 2.0 + simg2 // 2.0)
 
     return_images = {"fixed": fixed, "moving": moving, "composition": cimg}
-    return return_images
+
+    # Calculate registration result scores
+    # mse = sitk.MeanSquaredError(fixed, out)
+    # ncc = sitk.GetNormalizedCrossCorrelation(fixed, out)
+    # Convert SimpleITK images to NumPy arrays
+    fixed_array = sitk.GetArrayFromImage(fixed)
+    transformed_array = sitk.GetArrayFromImage(out)
+
+    # Calculate mean squared error
+    mse = np.mean((fixed_array - transformed_array) ** 2)
+    # Calculate normalized cross correlation
+    ncc = np.corrcoef(fixed_array.flatten(), transformed_array.flatten())[0, 1]
+    ncc = -(ncc**2)
+
+    score = {"mse": mse, "ncc": ncc}
+    print(f"score: {score}")
+
+    return return_images, score
 
 
 if __name__ == "__main__":
-    if len(argv) != 3:
-        print(f"Usage: {argv[0]} data_id fun_id")
+    if len(argv) != 4:
+        print(f"Usage: {argv[0]} dataset_folder data_id fun_id")
         exit(-1)
 
-    data_id = argv[1]
+    dataset_dir = argv[1]
+    data_id = argv[2]
+    fun_id = int(argv[3]) - 1
 
-    moving_image, fixed_image = data_pipeline(data_id)
+    moving_image, fixed_image = data_pipeline(dataset_dir, data_id)
 
     fixed = sitk.ReadImage("/tmp/fixed.tif", sitk.sitkFloat32)
     moving = sitk.ReadImage("/tmp/moving.tif", sitk.sitkFloat32)
 
-    outTx, R = [fun_1, fun_2, fun_3, fun_4, fun_5, fun_6, fun_7][int(argv[2]) - 1](
-        fixed, moving
-    )
+    outTx, R = [fun_1, fun_2, fun_3, fun_4, fun_5, fun_6, fun_7][fun_id](fixed, moving)
 
     write_log(outTx, R)
 
-    imgs = get_overley(fixed, moving, outTx, "outputs/itk/out.txt")
-    sitk.WriteImage(imgs["composition"], "outputs/itk/out.tif")
+    imgs, score = get_overley(fixed, moving, outTx, f"outputs/itk/out_{data_id}.txt")
+    sitk.WriteImage(imgs["composition"], f"outputs/itk/out_{data_id}.tif")

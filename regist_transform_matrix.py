@@ -1,18 +1,21 @@
 from pathlib import Path
 import pickle
 from sys import argv
+import os
 
 import numpy as np
 from tensorflow import keras
 import tensorflow as tf
+from affine_transform_layer import AffineTransformLayer
 
 from dnn.model_parameters import *
 from dnn.transform_pos import net_transform_pos, load_trained_trans_pos_net
 from keypoints.feature_gspp import Gspp, GsppFeature
-from keypoints.feature_spp import Spp
+from keypoints.feature_spp import Spp, SppFeature
 from keypoints.transform import trans_image_by
 from utils.dataset import load_image
-from utils.display import show_keypoints, show_trans_img
+from utils.display import show_keypoints, show_matches, show_trans_img
+from utils.score import calc_score
 
 
 EPOCHS = 200
@@ -115,16 +118,23 @@ if __name__ == "__main__":
         print(f"Usage: {argv[0]} dataset_folder data_id")
         exit(-1)
 
-    # get model
-    model = net_transform_pos(NEIGHBOR)
-    model.compile(optimizer=keras.optimizers.Adam(LR), loss="mse")
-    model.summary(expand_nested=True)
+    if "DOWN_SIZE" in os.environ:
+        DOWN_SIZE = int(os.environ.get("DOWN_SIZE"))
+    if "LR" in os.environ:
+        LR = float(os.environ.get("LR"))
+    if "EPOCHS" in os.environ:
+        EPOCHS = int(os.environ.get("EPOCHS"))
 
     # create dataset
     dataset_folder = argv[1]
     data_id = argv[2]
     cache_dir = Path("outputs") / "cache" / "dnn" / "trans" / f"{data_id}-x{DOWN_SIZE}"
     output_dir = Path("outputs") / "dnn" / "trans" / f"{data_id}-x{DOWN_SIZE}"
+
+    # get model
+    model = net_transform_pos(NEIGHBOR)
+    model.compile(optimizer=keras.optimizers.Adam(LR), loss="mse")
+    model.summary(expand_nested=True)
 
     dataset_cache_path = cache_dir / method_str() / "dataset.pkl"
     if not dataset_cache_path.exists():
@@ -137,8 +147,26 @@ if __name__ == "__main__":
             pack = pickle.load(f)
         imgs, feats, shapes = pack["imgs"], pack["feats"], pack["shapes"]
 
-    dataset_train = create_train_dataset(feats[0], feats[1], shapes[0], shapes[1])
-    dataset_len = dataset_train[1].shape[0]
+    if "SCORE" in os.environ:
+        with open(str(output_dir / "trans2d_r_t.pkl"), "rb") as f:
+            print(
+                "load transformation matrix from ", str(output_dir / "trans2d_r_t.pkl")
+            )
+            trans = pickle.load(f)
+
+        R = np.eye(3, dtype=np.float32)
+        R[:2, :2] = trans["r"]
+        R[2:, :2] = trans["t"]
+        # R = trans["r"]
+
+        print("transform \n", R)
+
+        score = calc_score(imgs[0], imgs[1], R)
+        print(f"score: {score}")
+        exit(0)
+
+    dataset_raw = create_train_dataset(feats[0], feats[1], shapes[0], shapes[1])
+    dataset_len = dataset_raw[1].shape[0]
     print(f"dataset len {dataset_len}")
 
     dataset_train = tf.data.Dataset.zip(
@@ -147,11 +175,11 @@ if __name__ == "__main__":
                 tuple(
                     [
                         tf.data.Dataset.from_tensor_slices(data)
-                        for data in dataset_train[0]
+                        for data in dataset_raw[0]
                     ]
                 )
             ),
-            tf.data.Dataset.from_tensor_slices(dataset_train[1]),
+            tf.data.Dataset.from_tensor_slices(dataset_raw[1]),
         )
     )
     dataset_train = dataset_train.batch(batch_size=1)
@@ -162,34 +190,22 @@ if __name__ == "__main__":
         model_path, "loss", save_best_only=True, mode="min"
     )
     stop_cb = keras.callbacks.EarlyStopping(
-        "loss", min_delta=0.1, mode="min", patience=3
+        "loss", min_delta=0.5, mode="min", patience=3, start_from_epoch=20
     )
 
-    model.fit(dataset_train, epochs=EPOCHS, callbacks=[model_save_cb, stop_cb])
+    model.fit(
+        dataset_train,
+        epochs=EPOCHS,
+        callbacks=[
+            model_save_cb,
+            stop_cb,
+        ],
+    )
 
     # model.save(model_path)
     print(f"Save model to {model_path}")
 
-    # model = keras.models.load_model(str(output_dir / "siamese_model.h5"))
-    # point_feat_model = net_point_feature(NUM_FEAT_INPUT, FEAT_LEN)
-    # point_feat_model.set_weights(
-    #     model.get_layer("global_feat_model").get_layer("point_feat_model").get_weights()
-    # )
-    # point_feat_model.summary()
-    # for weight in point_feat_model.get_weights():
-    #     print(weight)
-
-    trans_weights = model.get_layer("trans_matrix").get_weights()
-    [print("trans weights\n", trans_weight) for trans_weight in trans_weights]
-
-    trans_scale = np.array(trans_weights[0])
-    trans_r = np.array(trans_weights[1])
-    trans_t = np.array(trans_weights[2])
-    trans = {
-        "r": trans_r * trans_scale.T,
-        "t": trans_t,
-    }
-    # print("transform \n", trans)
+    trans = AffineTransformLayer.get_trans_matrix(model)
 
     with open(str(output_dir / "trans2d_r_t.pkl"), "wb") as f:
         pickle.dump(

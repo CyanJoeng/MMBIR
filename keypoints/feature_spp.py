@@ -23,8 +23,8 @@ class SppKeypoint:
 class SppFeature(PointFeature):
     SIGMOID_DISTANCE = False
 
-    def __init__(self, kp, descriptor: None) -> None:
-        super().__init__(SppKeypoint(kp), descriptor)
+    def __init__(self, center, descriptor: None) -> None:
+        super().__init__(SppKeypoint(center), descriptor)
 
     @override
     def distance_to(self, another_feature) -> float:
@@ -247,6 +247,7 @@ class Spp:
 
         img_h, img_w, _ = self.img.shape
         mask_size = min(img_h, img_w) // 50
+        mask_size = 4
         print(f"\tmask size {mask_size}")
 
         top_feature_pos = self._feature_selection(

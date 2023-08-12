@@ -5,7 +5,6 @@ import tensorflow as tf
 class KNNFeatureLayer(keras.layers.Layer):
     def __init__(self, **kwargs):
         super(KNNFeatureLayer, self).__init__(**kwargs)
-        self.k = 1
 
     def build(self, input_shape):
         super(KNNFeatureLayer, self).build(input_shape)
@@ -27,34 +26,37 @@ class KNNFeatureLayer(keras.layers.Layer):
             axis=-1,
         )
 
-        # dist shape B x N x K
-        # indices shape B x N x K
-        dist, indices = tf.nn.top_k(-distance_matrix, k=self.k)
+        # dist shape B x N x k
+        # indices shape B x N x k
+        dist, indices = tf.nn.top_k(-distance_matrix, k=2)
+        dist = -dist
 
-        # neighbors shape B x N x K x 2
-        matched_pos = tf.gather(pos1, indices, batch_dims=1)
+        # neighbors shape B x N x 1 x 2
+        matched_pos = tf.gather(pos1, indices[:, :, :1], batch_dims=1)
 
         # output shape B x N x 2
         output = tf.squeeze(matched_pos, axis=2)
 
-        dist = tf.squeeze(dist, axis=-1)
-        th = tf.reduce_max(dist, axis=-1) - tf.reduce_min(dist, axis=-1) / 4
-        select = tf.cast(dist < th, tf.float32) + 1e-6
+        weight = dist[:, :, 0]
 
-        dist = tf.divide(dist, select)
+        # th = tf.reduce_max(dist, axis=-1) - tf.reduce_min(dist, axis=-1) / 4
+        # select = tf.cast(weight < th, tf.float32) + 1e-6
+        weight = tf.cast(dist[:, :, 1] / dist[:, :, 0], tf.float32) - 1.0
 
-        return output, dist
+        # weight = tf.divide(weight, select)
+
+        return output, 1 / weight
 
     def get_config(self):
         config = super().get_config()
-        config.update(
-            {
-                "k": self.k,
-            }
-        )
+        # config.update(
+        #     {
+        #         "k": self.k,
+        #     }
+        # )
         return config
 
     @classmethod
     def from_config(cls, config):
-        k = config.pop("k")
+        # k = config.pop("k")
         return cls()

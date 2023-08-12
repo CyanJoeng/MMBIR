@@ -7,7 +7,7 @@ import numpy as np
 
 from dnn.global_feature import get_trained_point_feat_net
 from dnn.model_parameters import SPP_FEAT_LEN
-from dnn.transform import calc_trans_matrix_by_matches
+from dnn.transform_match import calc_trans_matrix_by_matches
 from keypoints.feature import Feature, PointFeature, feature_match
 from keypoints.feature_gspp import Gspp, GsppFeature
 from keypoints.feature_orb import Orb
@@ -16,6 +16,7 @@ from keypoints.feature_spp import Spp, SppFeature
 from keypoints.transform import (
     calc_trans_matrix_by_lstsq,
     filter_by_fundamental,
+    filter_by_homography,
     find_trans_matrix,
     trans_image_by,
 )
@@ -230,41 +231,55 @@ def registration_pipeline(img_path: Tuple[str], args):
     save_path = str(save_dir / "matches.tif")
     is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
 
-    # dnn refine desc
-    feat_pano, feat_he = point_feat_dnn_trans(
-        feat_pano, feat_he, method, get_num_neighbor(args.method)
-    )
-    print(f"feat len -> {feat_pano[0].desc.shape}")
+    trans_matrix, homo_matches = filter_by_homography(matches)
 
-    # match new desc with Spp matching method
-    save_dir = save_dir / "dnn"
-    save_dir.mkdir(exist_ok=True)
-    matches = match(
-        feat_pano, feat_he, args.count, Spp, verbose=verbose, cache_dir=str(save_dir)
-    )
-    print("dnn refined matched count  ", len(matches))
+    save_path = str(save_dir / "matches_homo.tif")
+    is_exit = show_matches(img_pano, img_he, homo_matches, save_path, verbose=verbose)
 
-    save_path = str(save_dir / "matches.tif")
-    is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
+    DNN = False
+    if DNN:
+        # dnn refine desc
+        feat_pano, feat_he = point_feat_dnn_trans(
+            feat_pano, feat_he, method, get_num_neighbor(args.method)
+        )
+        print(f"feat len -> {feat_pano[0].desc.shape}")
 
-    matched_features = get_matched_dnn_features(matches, img_he.shape)
-    if args.cache_feature:
-        cache_matched_dnn_features(matched_features, data_id, args.method)
+        # match new desc with Spp matching method
+        save_dir = save_dir / "dnn"
+        save_dir.mkdir(exist_ok=True)
+        matches = match(
+            feat_pano,
+            feat_he,
+            args.count,
+            Spp,
+            verbose=verbose,
+            cache_dir=str(save_dir),
+        )
+        print("dnn refined matched count  ", len(matches))
 
-    # trans_matrix = calc_trans_matrix_by_matches(
-    #     matched_features[0], matched_features[1]
-    # )
-    # trans_matrix, homo_matches = find_trans_matrix(
-    #     matched_features[0], matched_features[1]
-    # )
-    trans_matrix = calc_trans_matrix_by_lstsq(matched_features[0], matched_features[1])
-    # trans_weight_path = str(dnn_dir / "trans" / "trans2d_r_t.pkl")
-    # with open(trans_weight_path, "rb") as f:
-    #     trans_matrix = pickle.load(f)
+        save_path = str(save_dir / "matches.tif")
+        is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
 
-    transed_data = trans_image_by(trans_matrix, img_pano)
-    save_path = str(save_dir / "overlay.tif")
-    show_trans_img(img_he, transed_data, save_path)
+        matched_features = get_matched_dnn_features(matches, img_he.shape)
+        if args.cache_feature:
+            cache_matched_dnn_features(matched_features, data_id, args.method)
+
+        # trans_matrix = calc_trans_matrix_by_matches(
+        #     matched_features[0], matched_features[1]
+        # )
+        # trans_matrix, homo_matches = find_trans_matrix(
+        #     matched_features[0], matched_features[1]
+        # )
+        trans_matrix = calc_trans_matrix_by_lstsq(
+            matched_features[0], matched_features[1]
+        )
+        # trans_weight_path = str(dnn_dir / "trans" / "trans2d_r_t.pkl")
+        # with open(trans_weight_path, "rb") as f:
+        #     trans_matrix = pickle.load(f)
+
+        transed_data = trans_image_by(trans_matrix, img_pano)
+        save_path = str(save_dir / "overlay.tif")
+        show_trans_img(img_he, transed_data, save_path)
 
     return is_exit
 

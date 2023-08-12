@@ -33,10 +33,16 @@ class Orb:
         ]
 
     @staticmethod
+    def refine_fun(query_map, r, cs):
+        # return query_map[r, cs[0]] < query_map[r, cs[1]] and query_map[r, cs[0]] < 0.75
+        return True
+
+    @staticmethod
     def match(
         orb_moving: List[OrbFeature],
         orb_fixed: List[OrbFeature],
         top_count=30,
+        filter_fun=None,
         cache_dir="",
     ) -> List[Tuple[Feature]]:
         bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)

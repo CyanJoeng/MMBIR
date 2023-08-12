@@ -1,9 +1,9 @@
 from tensorflow import keras
 import tensorflow as tf
-from dnn.knn_pair_layer import KNNPairLayer
+from affine_transform_layer import AffineTransformLayer
+from dnn.knn_pair_layer import KNNFeatureLayer
 from pathlib import Path
 
-from dnn.matrix_transform_layer import MatrixTransformLayer
 from dnn.model_parameters import (
     GLOBAL_FEAT_LEN,
     OUT_FEAT_LEN,
@@ -39,37 +39,50 @@ def net_transform_pos(num_neighbor: int = 1):
     """
 
     N, F, K = NUM_FEAT_INPUT, SPP_FEAT_LEN, num_neighbor
-    input_0_feat = keras.Input(shape=(N, F, K))
-    input_0_pos = keras.Input(shape=(N, 2))
-    input_1_feat = keras.Input(shape=(N, F, K))
-    input_1_pos = keras.Input(shape=(N, 2))
+    input_0_feat = keras.Input(shape=(N, F, K), name="moving_feat")
+    input_0_pos = keras.Input(shape=(N, 2), name="moving_pos")
+    input_1_feat = keras.Input(shape=(N, F, K), name="fixed_feat")
+    input_1_pos = keras.Input(shape=(N, 2), name="fixed_pos")
 
     feat_layers = keras.Sequential(
         [
             keras.layers.Reshape((N, F, K)),
             keras.layers.Conv2D(
-                64, (1, F), strides=1, padding="valid", activation="relu"
+                128, (1, F), strides=1, padding="valid", activation="relu"
             ),
             # keras.layers.Conv2D(
             #     64, (1, 1), strides=1, padding="valid", activation="relu"
             # ),
             keras.layers.Reshape((N, -1)),
-        ]
+        ],
+        name="feature_refine",
     )
 
     new_feat0 = feat_layers(input_0_feat)
     new_feat1 = feat_layers(input_1_feat)
 
-    transed_pos = MatrixTransformLayer(dim=2, name="trans_matrix")(input_0_pos)
-    matched_pos, dist = KNNPairLayer(k=1)((new_feat0, new_feat1, input_1_pos))
-
-    output = tf.reduce_sum(
-        tf.divide(
-            tf.reduce_sum(tf.square(tf.subtract(transed_pos, matched_pos)), axis=-1),
-            dist,
-        ),
-        axis=-1,
+    transed_pos = AffineTransformLayer(name="affine_transform")(input_0_pos)
+    matched_pos, dist = KNNFeatureLayer(name="feature_matchine")(
+        (new_feat0, new_feat1, input_1_pos)
     )
+
+    def least_square(inputs):
+        trans_p, match_p, dst = inputs
+
+        return tf.reduce_sum(
+            tf.divide(
+                tf.reduce_sum(tf.square(tf.subtract(trans_p, match_p)), axis=-1),
+                dst,
+            ),
+            axis=-1,
+        )
+
+    output = keras.Sequential(
+        [
+            keras.layers.Lambda(function=least_square),
+        ],
+        name="least_square",
+    )((transed_pos, matched_pos, dist))
 
     model = keras.Model(
         inputs=[input_0_feat, input_0_pos, input_1_feat, input_1_pos], outputs=output
@@ -86,7 +99,7 @@ def load_trained_trans_pos_net(num_neighbor) -> keras.Model:
     assert model_path.exists()
     with keras.utils.custom_object_scope(
         {
-            "KNNPairLayer": KNNPairLayer,
+            "KNNPairLayer": KNNFeatureLayer,
         }
     ):
         model = keras.models.load_model(model_path)
