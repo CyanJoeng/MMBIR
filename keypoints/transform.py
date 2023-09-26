@@ -8,6 +8,22 @@ MIN_HOMO_COUNT = 10
 MIN_FUNDA_COUNT = 8
 
 
+def unify_img_pts(pts, shape):
+    # pts shape (N x 1 x 2)
+    assert len(pts.shape) == 3
+    assert pts.shape[1] == 1
+    return pts / np.array([shape[1], shape[0]], dtype=np.float32).reshape(1, 2) * 2 - 1
+
+
+def deunify_img_pts(pts, shape):
+    # pts shape (N x 1 x 2)
+    assert len(pts.shape) == 3
+    assert pts.shape[1] == 1
+    return (
+        (pts + 1) * 0.5 * np.array([shape[1], shape[0]], dtype=np.float32).reshape(1, 2)
+    )
+
+
 def filter_by_fundamental(matches: List[Tuple[PointFeature]]):
     if len(matches) > MIN_HOMO_COUNT:
         src_pts = np.float32([m[0].keypoint.pt for m in matches]).reshape(-1, 1, 2)
@@ -52,20 +68,26 @@ def filter_by_homography(matches: List[Tuple[PointFeature]]):
     return M, refined_matches
 
 
-def find_trans_matrix(data_pano, data_he):
-    input_pano_pos = np.array(data_pano[0]).reshape((-1, 2)).astype(np.float32)
-    input_he_pos = np.array(data_he[0]).reshape((-1, 2)).astype(np.float32)
+def matches_to_pts(matches):
+    src_pts = np.float32([m[0].keypoint.pt for m in matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([m[1].keypoint.pt for m in matches]).reshape(-1, 1, 2)
+    return src_pts, dst_pts
 
-    if input_pano_pos.shape[0] > MIN_HOMO_COUNT:
-        src_pts = input_pano_pos.reshape(-1, 1, 2)
-        dst_pts = input_he_pos.reshape(-1, 1, 2)
+
+def find_trans_matrix(pts_mov, pts_fix):
+    input_mov_pos = np.array(pts_mov[0]).reshape((-1, 2)).astype(np.float32)
+    input_fix_pos = np.array(pts_fix[0]).reshape((-1, 2)).astype(np.float32)
+
+    if input_mov_pos.shape[0] > MIN_HOMO_COUNT:
+        src_pts = input_mov_pos.reshape(-1, 1, 2)
+        dst_pts = input_fix_pos.reshape(-1, 1, 2)
 
         M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 10.0)
         matchesMask = mask.ravel().tolist()
     else:
         print(
             "Not enough matches are found - {}/{}".format(
-                input_pano_pos.shape, MIN_HOMO_COUNT
+                input_mov_pos.shape, MIN_HOMO_COUNT
             )
         )
         matchesMask = None
@@ -73,55 +95,63 @@ def find_trans_matrix(data_pano, data_he):
     # print("match mask:", matchesMask)
     # print("homography matrix:\n", M)
 
-    print(f"\tfinal matches size {input_pano_pos.shape} -> {np.sum(matchesMask)}")
+    print(f"\tfinal matches size {input_mov_pos.shape} -> {np.sum(matchesMask)}")
     M = M.T
     print("Homo matrix\n", M)
 
     return M, matchesMask
 
 
-def calc_trans_matrix_by_lstsq(data_pano, data_he):
-    input_pano_pos = np.array(data_pano[0]).reshape((-1, 2)).astype(np.float32)
-    input_he_pos = np.array(data_he[0]).reshape((-1, 2)).astype(np.float32)
+def calc_trans_matrix_by_lstsq(pts_mov, pts_fix):
+    input_mov_pos = np.array(pts_mov).reshape((-1, 2)).astype(np.float32)
+    input_fix_pos = np.array(pts_fix).reshape((-1, 2)).astype(np.float32)
 
-    feat_count = len(input_pano_pos)
+    feat_count = len(input_mov_pos)
 
-    input_pano_pos = np.hstack([input_pano_pos, np.ones((feat_count, 1))])
-    input_he_pos = np.hstack([input_he_pos, np.ones((feat_count, 1))])
+    input_mov_pos = np.hstack([input_mov_pos, np.ones((feat_count, 1))])
+    input_fix_pos = np.hstack([input_fix_pos, np.ones((feat_count, 1))])
 
-    affine_matrix, _, _, _ = np.linalg.lstsq(input_pano_pos, input_he_pos, rcond=None)
+    affine_matrix, _, _, _ = np.linalg.lstsq(input_mov_pos, input_fix_pos, rcond=None)
 
     print("trans matrix with lstsq \n", affine_matrix)
 
     return affine_matrix
 
 
-def trans_image_by(trans_matrix, images) -> np.ndarray:
+def sample_pix_with(trans_matrix, images) -> np.ndarray:
     print("trans image")
 
-    img_pano, img_he = images
+    img_mov, img_fix = images
 
-    h, w, _ = img_pano.shape
-    colour = np.float32([img_pano[r, c] for r in range(h) for c in range(w)]).reshape(
-        -1, 3
-    )
+    mov_h, mov_w, _ = img_mov.shape
+    fix_h, fix_w, _ = img_fix.shape
 
-    pts = (
-        np.float32([[c, r] for r in range(h) for c in range(w)]).reshape(-1, 2)
-        / np.array([w, h])
+    # N x 3
+    pts_fix = (
+        np.float32([[c, r] for r in range(fix_h) for c in range(fix_w)]).reshape(-1, 2)
+        / np.array([fix_w, fix_h])
         * 2
         - 1
     )
-    pts = np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=-1)
+    pts_fix = np.concatenate([pts_fix, np.ones((pts_fix.shape[0], 1))], axis=-1)
     # dst = cv2.perspectiveTransform(pts, trans_matrix)
-    dst = pts @ trans_matrix
+    # project pts on moving image
 
-    h, w, _ = img_he.shape
-    # dst = dst[:, :2]
-    dst = (dst[:, :2] + 1) * 0.5 * np.array([w, h])
+    pts_proj = pts_fix @ np.linalg.inv(trans_matrix)
 
-    print(f"\tdata shape  dst {dst.shape} colour {colour.shape}")
-    data = np.concatenate((dst, colour), axis=-1)
-    print("\ttrans_image data shape ", data.shape)
-    print("\ttrans offset ", trans_matrix[2, :2] / 2 * np.array([w, h]))
+    dst = (pts_proj[:, :2] + 1) * 0.5 * np.array([mov_w, mov_h])
+
+    def get_data(c, r):
+        x, y = dst[r * fix_w + c]
+        x, y = int(x + 0.5), int(y + 0.5)
+        if x < 0 or y < 0 or x >= mov_w or y >= mov_h:
+            return [c, r, 0, 0, 0]
+        return [c, r] + list(img_mov[y, x])
+
+    data = np.float32(
+        [get_data(c, r) for r in range(fix_h) for c in range(fix_w)]
+    ).reshape(-1, 5)
+
+    print("\tsample data shape ", data.shape)
+    print("\ttrans offset ", trans_matrix[2, :2] / 2 * np.array([mov_w, mov_h]))
     return data

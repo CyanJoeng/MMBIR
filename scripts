@@ -1,0 +1,3 @@
+python registration_cv.py /data/H\&E_IMC/Pair/ --count 100 --method spp --sample 003_03 --features 400 --downsize 12
+python registration_cv.py /data/H\&E_IMC/Pair/ --count 100 --method spp --sample 003_0A --features 400 --downsize 8
+python registration_cv.py /data/H\&E_IMC/Pair/ --count 100 --method spp --sample 003_0B --features 400 --downsize 8

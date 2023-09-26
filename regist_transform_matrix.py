@@ -12,9 +12,9 @@ from dnn.transform_pos import net_transform_pos, load_trained_trans_pos_net
 from dnn.affine_transform_layer import AffineTransformLayer
 from keypoints.feature_gspp import Gspp, GsppFeature
 from keypoints.feature_spp import Spp, SppFeature
-from keypoints.transform import trans_image_by
+from keypoints.transform import sample_pix_with
 from utils.dataset import load_image
-from utils.display import show_keypoints, show_matches, show_trans_img
+from utils.display import show_keypoints, show_matches, show_overlay_img
 from utils.score import calc_score
 
 
@@ -22,6 +22,7 @@ EPOCHS = 200
 LR = 0.01
 
 
+NO_CACHE = False
 DOWN_SIZE = 4
 
 FEATURE_METHOD = Spp
@@ -60,13 +61,13 @@ def data_pipeline(dataset_folder, data_id, cache_dir):
     cache_dir = Path(cache_dir / method_str() / data_id)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    img_path = str(data_dir / f"{main_id}_panorama.tif")
-    pano_img, pano_features, pano_shape = detect_features(img_path, cache_dir, "pano")
-
     img_path = str(data_dir / f"HE{main_id}.tif")
-    he_img, he_features, he_shape = detect_features(img_path, cache_dir, "he")
+    mov_img, mov_features, mov_shape = detect_features(img_path, cache_dir, "mov")
 
-    return (pano_img, he_img), (pano_features, he_features), (pano_shape, he_shape)
+    img_path = str(data_dir / f"{main_id}_panorama.tif")
+    fix_img, fix_features, fix_shape = detect_features(img_path, cache_dir, "fix")
+
+    return (mov_img, fix_img), (mov_features, fix_features), (mov_shape, fix_shape)
 
 
 def set_desc(data, feature):
@@ -83,31 +84,31 @@ def set_pos(data, feature, scale=1):
     data[:] = center / scale * 2 - 1
 
 
-def create_train_dataset(pano_features, he_features, pano_shape, he_shape):
+def create_train_dataset(mov_feats, fix_feats, mov_shape, fix_shape):
     feat_len = SPP_FEAT_LEN
     print(f"feature len {feat_len}")
 
-    input_pano_feat = np.zeros((1, NUM_FEAT_INPUT, feat_len, NEIGHBOR))
-    input_pano_pose = np.zeros((1, NUM_FEAT_INPUT, 2))
-    input_he_feat = np.zeros((1, NUM_FEAT_INPUT, feat_len, NEIGHBOR))
-    input_he_pose = np.zeros((1, NUM_FEAT_INPUT, 2))
+    input_mov_feat = np.zeros((1, NUM_FEAT_INPUT, feat_len, NEIGHBOR))
+    input_mov_pose = np.zeros((1, NUM_FEAT_INPUT, 2))
+    input_fix_feat = np.zeros((1, NUM_FEAT_INPUT, feat_len, NEIGHBOR))
+    input_fix_pose = np.zeros((1, NUM_FEAT_INPUT, 2))
     input_label = np.zeros((1,), dtype=np.int32)
 
     # create dataset by random sampling
 
-    pano_sz = np.array(pano_shape)[:2][::-1]
-    he_sz = np.array(he_shape)[:2][::-1]
+    pano_sz = np.array(mov_shape)[:2][::-1]
+    he_sz = np.array(fix_shape)[:2][::-1]
 
     for idx in range(NUM_FEAT_INPUT):
-        set_desc(input_pano_feat[0, idx], pano_features[idx])
-        set_pos(input_pano_pose[0, idx], pano_features[idx], pano_sz)
+        set_desc(input_mov_feat[0, idx], mov_feats[idx])
+        set_pos(input_mov_pose[0, idx], mov_feats[idx], pano_sz)
 
-        set_desc(input_he_feat[0, idx], he_features[idx])
-        set_pos(input_he_pose[0, idx], he_features[idx], he_sz)
+        set_desc(input_fix_feat[0, idx], fix_feats[idx])
+        set_pos(input_fix_pose[0, idx], fix_feats[idx], he_sz)
 
     input_label[0] = 0
 
-    inputs = (input_pano_feat, input_pano_pose, input_he_feat, input_he_pose)
+    inputs = (input_mov_feat, input_mov_pose, input_fix_feat, input_fix_pose)
     dataset = (inputs, input_label)
 
     return dataset
@@ -124,12 +125,14 @@ if __name__ == "__main__":
         LR = float(os.environ.get("LR"))
     if "EPOCHS" in os.environ:
         EPOCHS = int(os.environ.get("EPOCHS"))
+    if "NO_CACHE" in os.environ:
+        NO_CACHE = True
 
     # create dataset
     dataset_folder = argv[1]
     data_id = argv[2]
-    cache_dir = Path("outputs") / "cache" / "dnn" / "trans" / f"{data_id}-x{DOWN_SIZE}"
     output_dir = Path("outputs") / "dnn" / "trans" / f"{data_id}-x{DOWN_SIZE}"
+    cache_dir = output_dir / "cache"
 
     # get model
     model = net_transform_pos(NEIGHBOR)
@@ -137,7 +140,7 @@ if __name__ == "__main__":
     model.summary(expand_nested=True)
 
     dataset_cache_path = cache_dir / method_str() / "dataset.pkl"
-    if not dataset_cache_path.exists():
+    if NO_CACHE or not dataset_cache_path.exists():
         imgs, feats, shapes = data_pipeline(dataset_folder, data_id, cache_dir)
 
         with open(str(dataset_cache_path), "wb") as f:
@@ -220,9 +223,9 @@ if __name__ == "__main__":
     # R = trans["r"]
 
     print("transform \n", R)
-    transed_data = trans_image_by(R, imgs)
+    sample_data = sample_pix_with(R, imgs)
     save_path = str(output_dir / "overlay.tif")
-    show_trans_img(imgs[1], transed_data, save_path)
+    show_overlay_img(imgs[1], sample_data, save_path)
 
     # model = load_trained_trans_pos_net(NEIGHBOR)
     # model.summary()

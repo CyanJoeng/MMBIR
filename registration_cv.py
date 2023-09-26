@@ -18,7 +18,9 @@ from keypoints.transform import (
     filter_by_fundamental,
     filter_by_homography,
     find_trans_matrix,
-    trans_image_by,
+    matches_to_pts,
+    sample_pix_with,
+    unify_img_pts,
 )
 from matplotlib import pyplot as plt
 from utils.dataset import load_image, read_dataset_folder
@@ -191,7 +193,7 @@ def cache_matched_dnn_features(
     print("cache features to ", str(cache_path))
 
 
-def registration_pipeline(img_path: Tuple[str], args):
+def registration_pipeline(img_path, args):
     verbose = args.verbose
     method = get_method(args.method)
     data_id = Path(img_path[0]).parts[-2]
@@ -214,12 +216,15 @@ def registration_pipeline(img_path: Tuple[str], args):
         show_keypoints(img, point_features, str(save_dir / f"keypoints_{label}.tif"))
         return img, point_features
 
-    img_pano, feat_pano = detect(img_path[0], "pano")
-    img_he, feat_he = detect(img_path[1], "he")
+    mov_id, mov_label = 1, "he"
+    fix_id, fix_label = 0, "pano"
+
+    img_mov, feat_mov = detect(img_path[mov_id], mov_label)
+    img_fix, feat_fix = detect(img_path[fix_id], fix_label)
 
     matches = match(
-        feat_pano,
-        feat_he,
+        feat_mov,
+        feat_fix,
         args.count,
         method,
         # refine=True,
@@ -229,27 +234,33 @@ def registration_pipeline(img_path: Tuple[str], args):
     print("matched (pano-he) count  ", len(matches))
 
     save_path = str(save_dir / "matches.tif")
-    is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
+    is_exit = show_matches(img_mov, img_fix, matches, save_path, verbose=verbose)
 
     trans_matrix, homo_matches = filter_by_homography(matches)
 
     save_path = str(save_dir / "matches_homo.tif")
-    is_exit = show_matches(img_pano, img_he, homo_matches, save_path, verbose=verbose)
+    is_exit = show_matches(img_mov, img_fix, homo_matches, save_path, verbose=verbose)
+
+    pts_mov, pts_fix = matches_to_pts(homo_matches)
+    pts_mov = unify_img_pts(pts_mov, img_mov.shape)
+    pts_fix = unify_img_pts(pts_fix, img_fix.shape)
+
+    trans_matrix = calc_trans_matrix_by_lstsq(pts_mov, pts_fix)
 
     DNN = False
     if DNN:
         # dnn refine desc
-        feat_pano, feat_he = point_feat_dnn_trans(
-            feat_pano, feat_he, method, get_num_neighbor(args.method)
+        feat_mov, feat_fix = point_feat_dnn_trans(
+            feat_mov, feat_fix, method, get_num_neighbor(args.method)
         )
-        print(f"feat len -> {feat_pano[0].desc.shape}")
+        print(f"feat len -> {feat_mov[0].desc.shape}")
 
         # match new desc with Spp matching method
         save_dir = save_dir / "dnn"
         save_dir.mkdir(exist_ok=True)
         matches = match(
-            feat_pano,
-            feat_he,
+            feat_mov,
+            feat_fix,
             args.count,
             Spp,
             verbose=verbose,
@@ -258,11 +269,11 @@ def registration_pipeline(img_path: Tuple[str], args):
         print("dnn refined matched count  ", len(matches))
 
         save_path = str(save_dir / "matches.tif")
-        is_exit = show_matches(img_pano, img_he, matches, save_path, verbose=verbose)
+        is_exit = show_matches(img_mov, img_fix, matches, save_path, verbose=verbose)
 
-        matched_features = get_matched_dnn_features(matches, img_he.shape)
+        matched_pts_feat = get_matched_dnn_features(matches, img_fix.shape)
         if args.cache_feature:
-            cache_matched_dnn_features(matched_features, data_id, args.method)
+            cache_matched_dnn_features(matched_pts_feat, data_id, args.method)
 
         # trans_matrix = calc_trans_matrix_by_matches(
         #     matched_features[0], matched_features[1]
@@ -271,15 +282,15 @@ def registration_pipeline(img_path: Tuple[str], args):
         #     matched_features[0], matched_features[1]
         # )
         trans_matrix = calc_trans_matrix_by_lstsq(
-            matched_features[0], matched_features[1]
+            matched_pts_feat[0][0], matched_pts_feat[1][0]
         )
         # trans_weight_path = str(dnn_dir / "trans" / "trans2d_r_t.pkl")
         # with open(trans_weight_path, "rb") as f:
         #     trans_matrix = pickle.load(f)
 
-        transed_data = trans_image_by(trans_matrix, img_pano)
-        save_path = str(save_dir / "overlay.tif")
-        show_trans_img(img_he, transed_data, save_path)
+    transed_data = sample_pix_with(trans_matrix, (img_mov, img_fix))
+    save_path = str(save_dir / "overlay.tif")
+    show_overlay_img(img_fix, transed_data, save_path)
 
     return is_exit
 

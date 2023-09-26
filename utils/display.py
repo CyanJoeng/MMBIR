@@ -82,23 +82,24 @@ def show_matches(
     cv2.imwrite(save_path, img_show)
 
 
-def show_trans_img(img_he: np.ndarray, trans_pts: np.ndarray, save_path: str):
-    h, w, _ = img_he.shape
+def show_overlay_img(img_fix: np.ndarray, sample_data: np.ndarray, save_path: str):
+    h, w, _ = img_fix.shape
     print("show_trans_img")
 
     sampling_img = np.zeros((h, w, 3), np.uint8)
     overlay_img = np.zeros((h, w, 3), np.uint8)
-    overlay_img[:, :, :] = img_he
-    for data in trans_pts:
+
+    overlay_img[:, :, :] = img_fix
+    for data in sample_data:
+        # fix image x, y
+        # sample on moving image b, g, r
         x, y, b, g, r = data
-        x += 0.5
-        y += 0.5
-        if x < 0 or x >= w or y < 0 or y >= h:
-            continue
         x, y = int(x), int(y)
 
-        sampling_img[y, x] = np.uint8(g)
-        overlay_img[y, x, 1] = np.uint8(g * 0.5 + overlay_img[y, x, 1] * 0.5)
+        sampling_img[y, x] = [b, g, r]
+        overlay_img[y, x] = (
+            np.array([b, g, r]) * 0.5 + overlay_img[y, x] * 0.5
+        ).astype(np.uint8)
 
     print("\tsave path: ", save_path)
     cv2.imwrite(save_path + ".sampling_img.tif", sampling_img)
