@@ -1,6 +1,6 @@
 from tensorflow import keras
 import tensorflow as tf
-from affine_transform_layer import AffineTransformLayer
+from dnn.affine_transform_layer import AffineTransformLayer
 from dnn.knn_pair_layer import KNNFeatureLayer
 from pathlib import Path
 

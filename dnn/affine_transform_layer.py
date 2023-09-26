@@ -2,7 +2,7 @@ from tensorflow import keras
 import tensorflow as tf
 import numpy as np
 
-SCALE_L = 1
+SCALE_L = 0.5
 SHEAR_L = 0.2
 
 

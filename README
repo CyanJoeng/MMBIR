@@ -1,0 +1,15 @@
+Feature Based Registration Methods
+
+#dirs
+keypoints/ 	# definitions of point feature
+dnn/ 		# dnn models and layers
+utils/		# some usageful methods 
+
+#execs
+registration_cv.py	# Registration pipeline for method without dnn
+regist_simpleitk.py	# intensity based Methods
+regist_transform_matrix.py	# the registration pipeline used in dissertation
+
+
+# help
+run ever exec without parameters will print the help informations

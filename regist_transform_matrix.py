@@ -6,10 +6,10 @@ import os
 import numpy as np
 from tensorflow import keras
 import tensorflow as tf
-from affine_transform_layer import AffineTransformLayer
 
 from dnn.model_parameters import *
 from dnn.transform_pos import net_transform_pos, load_trained_trans_pos_net
+from dnn.affine_transform_layer import AffineTransformLayer
 from keypoints.feature_gspp import Gspp, GsppFeature
 from keypoints.feature_spp import Spp, SppFeature
 from keypoints.transform import trans_image_by
